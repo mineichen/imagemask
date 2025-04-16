@@ -11,30 +11,27 @@ use super::{DebugAssertSortedByIter, OrderedRangeItem};
 pub struct OrderedNonOverlappingRangeIter<TIter, TMeta> {
     iter: std::iter::Fuse<TIter>,
     // Overlaps are resolved at this point
-    remainers: VecDeque<OrderedRangeItem<usize, TMeta>>,
-    max_start: usize,
+    remainers: VecDeque<OrderedRangeItem<TMeta>>,
+    max_start: u32,
 }
 impl<TIter, TMeta: Clone> OrderedNonOverlappingRangeIter<TIter, TMeta>
 where
-    TIter: Iterator<Item = OrderedRangeItem<usize, TMeta>>,
+    TIter: Iterator<Item = OrderedRangeItem<TMeta>>,
 {
     pub fn new(
         iter: TIter,
-    ) -> OrderedNonOverlappingRangeIter<impl Iterator<Item = OrderedRangeItem<usize, TMeta>>, TMeta>
-    {
+    ) -> OrderedNonOverlappingRangeIter<impl Iterator<Item = OrderedRangeItem<TMeta>>, TMeta> {
         OrderedNonOverlappingRangeIter {
-            iter: DebugAssertSortedByIter::new(iter, |x: &OrderedRangeItem<usize, TMeta>| {
-                x.comparator()
-            })
-            .fuse(),
+            iter: DebugAssertSortedByIter::new(iter, |x: &OrderedRangeItem<TMeta>| x.comparator())
+                .fuse(),
             remainers: Default::default(),
             max_start: 0,
         }
     }
 
     fn insert_remainer(
-        ordered_non_overlapping: &mut VecDeque<OrderedRangeItem<usize, TMeta>>,
-        mut new: OrderedRangeItem<usize, TMeta>,
+        ordered_non_overlapping: &mut VecDeque<OrderedRangeItem<TMeta>>,
+        mut new: OrderedRangeItem<TMeta>,
     ) {
         let mut idx = ordered_non_overlapping.len();
 
@@ -96,9 +93,9 @@ where
 
 impl<TIter, TMeta: Clone> Iterator for OrderedNonOverlappingRangeIter<TIter, TMeta>
 where
-    TIter: Iterator<Item = OrderedRangeItem<usize, TMeta>>,
+    TIter: Iterator<Item = OrderedRangeItem<TMeta>>,
 {
-    type Item = OrderedRangeItem<usize, TMeta>;
+    type Item = OrderedRangeItem<TMeta>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut first_end = if let Some(smallest) = self.remainers.front() {

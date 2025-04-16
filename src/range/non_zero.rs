@@ -3,9 +3,9 @@ use std::ops::{Deref, Range};
 
 /// NonZero is only checked during Debug and should not be relied upon for safety
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct NonZeroRange<T>(RangeUnchecked<T>);
+pub struct NonZeroRange(RangeUnchecked);
 
-impl<T: Debug> Debug for NonZeroRange<T> {
+impl Debug for NonZeroRange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}..{:?}", self.start, self.end))
     }
@@ -13,20 +13,20 @@ impl<T: Debug> Debug for NonZeroRange<T> {
 
 /// Exists, because std::ops::Range is not Copy
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct RangeUnchecked<T> {
-    pub start: T,
-    pub end: T,
+pub struct RangeUnchecked {
+    pub start: u32,
+    pub end: u32,
 }
 
-impl<T> From<NonZeroRange<T>> for std::ops::Range<T> {
-    fn from(value: NonZeroRange<T>) -> Self {
+impl From<NonZeroRange> for std::ops::Range<u32> {
+    fn from(value: NonZeroRange) -> Self {
         value.0.start..value.0.end
     }
 }
-impl<T: Debug + Ord> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
-    type Error = RangeZeroLenghtError<T>;
+impl TryFrom<std::ops::Range<u32>> for NonZeroRange {
+    type Error = RangeZeroLenghtError;
 
-    fn try_from(value: std::ops::Range<T>) -> Result<Self, Self::Error> {
+    fn try_from(value: std::ops::Range<u32>) -> Result<Self, Self::Error> {
         if value.is_empty() {
             Err(RangeZeroLenghtError(value))
         } else {
@@ -38,8 +38,8 @@ impl<T: Debug + Ord> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
     }
 }
 
-impl<T: Ord + Debug> NonZeroRange<T> {
-    pub fn new_unchecked(range: Range<T>) -> Self {
+impl NonZeroRange {
+    pub fn new_unchecked(range: Range<u32>) -> Self {
         let r = Self(RangeUnchecked {
             start: range.start,
             end: range.end,
@@ -55,10 +55,8 @@ impl<T: Ord + Debug> NonZeroRange<T> {
     pub fn overlaps(&self, other: &Self) -> bool {
         self.start < other.end && other.start < self.end
     }
-}
 
-impl NonZeroRange<usize> {
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> u32 {
         self.end - self.start
     }
     pub fn is_empty(&self) -> bool {
@@ -66,10 +64,10 @@ impl NonZeroRange<usize> {
     }
 }
 
-impl std::ops::Add<usize> for NonZeroRange<usize> {
-    type Output = NonZeroRange<usize>;
+impl std::ops::Add<u32> for NonZeroRange {
+    type Output = NonZeroRange;
 
-    fn add(self, rhs: usize) -> Self::Output {
+    fn add(self, rhs: u32) -> Self::Output {
         NonZeroRange(RangeUnchecked {
             start: self.start + rhs,
             end: self.end + rhs,
@@ -77,10 +75,10 @@ impl std::ops::Add<usize> for NonZeroRange<usize> {
     }
 }
 
-impl std::ops::Sub<usize> for NonZeroRange<usize> {
-    type Output = NonZeroRange<usize>;
+impl std::ops::Sub<u32> for NonZeroRange {
+    type Output = NonZeroRange;
 
-    fn sub(self, rhs: usize) -> Self::Output {
+    fn sub(self, rhs: u32) -> Self::Output {
         NonZeroRange(RangeUnchecked {
             start: self.start - rhs,
             end: self.end - rhs,
@@ -88,8 +86,8 @@ impl std::ops::Sub<usize> for NonZeroRange<usize> {
     }
 }
 
-impl<T> Deref for NonZeroRange<T> {
-    type Target = RangeUnchecked<T>;
+impl Deref for NonZeroRange {
+    type Target = RangeUnchecked;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -98,7 +96,7 @@ impl<T> Deref for NonZeroRange<T> {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0:?} is empty")]
-pub struct RangeZeroLenghtError<T: Debug>(std::ops::Range<T>);
+pub struct RangeZeroLenghtError(std::ops::Range<u32>);
 
 #[cfg(test)]
 mod tests {
@@ -138,7 +136,7 @@ mod tests {
     fn overlapping_end() {
         test_both_way(3..7, 0..4, true);
     }
-    fn test_both_way(a: Range<i32>, b: Range<i32>, expected: bool) {
+    fn test_both_way(a: Range<u32>, b: Range<u32>, expected: bool) {
         assert_eq!(
             expected,
             NonZeroRange::new_unchecked(a.clone())

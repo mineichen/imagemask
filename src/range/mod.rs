@@ -12,14 +12,14 @@ pub use merge_ordered_iter::*;
 pub use non_zero::*;
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct OrderedRangeItem<TRange, TMeta> {
-    pub priority: u32,
-    pub range: NonZeroRange<TRange>,
+pub struct OrderedRangeItem<TMeta> {
+    pub range: NonZeroRange,
     pub meta: TMeta,
+    pub priority: u32,
 }
 
-impl<TRange: Copy, TMeta> OrderedRangeItem<TRange, TMeta> {
-    pub fn comparator(&self) -> (TRange, u32) {
+impl<TMeta> OrderedRangeItem<TMeta> {
+    pub fn comparator(&self) -> (u32, u32) {
         (self.range.start, u32::MAX - self.priority)
     }
 }
