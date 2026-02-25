@@ -140,12 +140,12 @@ mod tests {
         let iter = OrderedNonOverlappingRangeIter::new(
             [
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..10),
+                    range: NonZeroRange::new(0..10),
                     priority: 1,
                     meta: (),
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(5..15),
+                    range: NonZeroRange::new(5..15),
                     priority: 0,
                     meta: (),
                 },
@@ -163,12 +163,12 @@ mod tests {
         let iter = OrderedNonOverlappingRangeIter::new(
             [
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..15),
+                    range: NonZeroRange::new(0..15),
                     priority: 0,
                     meta: 42,
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..10),
+                    range: NonZeroRange::new(0..10),
                     priority: 0,
                     meta: 84,
                 },
@@ -186,17 +186,17 @@ mod tests {
         let iter = OrderedNonOverlappingRangeIter::new(
             [
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..10),
+                    range: NonZeroRange::new(0..10),
                     priority: 0,
                     meta: (),
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..20),
+                    range: NonZeroRange::new(0..20),
                     priority: 0,
                     meta: (),
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(1..15),
+                    range: NonZeroRange::new(1..15),
                     priority: 2,
                     meta: (),
                 },
@@ -213,17 +213,17 @@ mod tests {
         let iter = OrderedNonOverlappingRangeIter::new(
             [
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..10),
+                    range: NonZeroRange::new(0..10),
                     priority: 0,
                     meta: 10,
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..20),
+                    range: NonZeroRange::new(0..20),
                     priority: 0,
                     meta: 20,
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(10..20),
+                    range: NonZeroRange::new(10..20),
                     priority: 2,
                     meta: 30,
                 },
@@ -240,17 +240,17 @@ mod tests {
         let iter = OrderedNonOverlappingRangeIter::new(
             [
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(0..10),
+                    range: NonZeroRange::new(0..10),
                     priority: 1,
                     meta: (),
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(1..15),
+                    range: NonZeroRange::new(1..15),
                     priority: 2,
                     meta: (),
                 },
                 OrderedRangeItem {
-                    range: NonZeroRange::new_unchecked(1..15),
+                    range: NonZeroRange::new(1..15),
                     priority: 0,
                     meta: (),
                 },
@@ -270,12 +270,12 @@ mod tests {
             OrderedNonOverlappingRangeIter::new(
                 vec![
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(12..14),
+                        range: NonZeroRange::new(12..14),
                         meta: 1,
                         priority: u32::MAX,
                     },
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(16..17),
+                        range: NonZeroRange::new(16..17),
                         meta: 1,
                         priority: u32::MAX,
                     },
@@ -293,17 +293,17 @@ mod tests {
             OrderedNonOverlappingRangeIter::new(
                 vec![
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(12..18),
+                        range: NonZeroRange::new(12..18),
                         meta: 1,
                         priority: u32::MAX,
                     },
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(13..17),
+                        range: NonZeroRange::new(13..17),
                         meta: 1,
                         priority: u32::MAX,
                     },
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(16..17),
+                        range: NonZeroRange::new(16..17),
                         meta: 1,
                         priority: u32::MAX,
                     },
@@ -322,17 +322,17 @@ mod tests {
             OrderedNonOverlappingRangeIter::new(
                 vec![
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(12..18),
+                        range: NonZeroRange::new(12..18),
                         meta: 1,
                         priority: 0
                     },
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(16..17),
+                        range: NonZeroRange::new(16..17),
                         meta: 1,
                         priority: 2,
                     },
                     OrderedRangeItem {
-                        range: NonZeroRange::new_unchecked(16..17),
+                        range: NonZeroRange::new(16..17),
                         meta: 1,
                         priority: 1
                     },
