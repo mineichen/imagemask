@@ -18,6 +18,15 @@ pub struct RangeUnchecked<T> {
     pub end: T,
 }
 
+impl NonZeroRange<u64> {
+    pub fn with_offset(&self, offset: i64) -> Self {
+        NonZeroRange(RangeUnchecked {
+            start: self.0.start.strict_add_signed(offset),
+            end: self.0.end.strict_add_signed(offset),
+        })
+    }
+}
+
 impl<T> From<NonZeroRange<T>> for std::ops::Range<T> {
     fn from(value: NonZeroRange<T>) -> Self {
         value.0.start..value.0.end

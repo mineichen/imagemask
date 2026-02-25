@@ -2,6 +2,7 @@
 /// Working with ranges or collections/iterators of ranges
 ///
 mod assert_sorted_iter;
+mod flat_map_inplace;
 mod merge_ordered_iter;
 mod non_zero;
 
@@ -11,6 +12,7 @@ use std::{
 };
 
 pub use assert_sorted_iter::*;
+pub use flat_map_inplace::*;
 pub use merge_ordered_iter::*;
 pub use non_zero::*;
 
@@ -34,6 +36,7 @@ impl<TMeta> OrderedRangeItem<TMeta> {
 /// Included.len() = excluded.len() + 1
 ///
 /// Meta is expected to be indexable for each included range
+#[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
 pub struct NonEmptyOrderedRanges<TIncluded, TExcluded, TMeta> {
     initial_offset: u64,
@@ -108,6 +111,50 @@ impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Ve
     }
 }
 
+impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterator
+    for NonEmptyOrderedRanges<TIncluded, TExcluded, Vec<TMeta>>
+{
+    type Item = MetaRange<TMeta>;
+    type IntoIter = OwnedOrderedRangeIter<TIncluded, TExcluded, TMeta>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        OwnedOrderedRangeIter {
+            include: self.included.into_iter(),
+            excluded: self.excluded.into_iter(),
+            meta: self.meta.into_iter(),
+            offset: self.initial_offset,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct MetaRange<TMeta> {
+    pub range: NonZeroRange<u64>,
+    pub meta: TMeta,
+}
+
+impl<TMeta> MetaRange<TMeta> {
+    pub fn copy_with_offset(&self, offset: i64) -> Self
+    where
+        TMeta: Copy,
+    {
+        Self {
+            range: self.range.with_offset(offset),
+            meta: self.meta,
+        }
+    }
+
+    pub fn clone_with_offset(&self, offset: i64) -> Self
+    where
+        TMeta: Clone,
+    {
+        Self {
+            range: self.range.with_offset(offset),
+            meta: self.meta.clone(),
+        }
+    }
+}
+
 pub struct OrderedRangeIter<'a, TIncluded, TExcluded, TMeta> {
     include: &'a [TIncluded],
     excluded: &'a [TExcluded],
@@ -115,10 +162,40 @@ pub struct OrderedRangeIter<'a, TIncluded, TExcluded, TMeta> {
     offset: u64,
 }
 
+pub struct OwnedOrderedRangeIter<TIncluded, TExcluded, TMeta> {
+    include: std::vec::IntoIter<TIncluded>,
+    excluded: std::vec::IntoIter<TExcluded>,
+    meta: std::vec::IntoIter<TMeta>,
+    offset: u64,
+}
+
+impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> Iterator
+    for OwnedOrderedRangeIter<TIncluded, TExcluded, TMeta>
+{
+    type Item = MetaRange<TMeta>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let include = self.include.next()?;
+        let meta = self.meta.next().expect("There must be more metadata");
+
+        let out_range_end = self.offset + include.into();
+        let out_range = unsafe { NonZeroRange::new_unchecked(self.offset..out_range_end) };
+
+        if let Some(exclude) = self.excluded.next() {
+            self.offset = out_range_end + exclude.into();
+        }
+
+        Some(MetaRange {
+            range: out_range,
+            meta,
+        })
+    }
+}
+
 impl<'a, TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> Iterator
     for OrderedRangeIter<'a, TIncluded, TExcluded, TMeta>
 {
-    type Item = (NonZeroRange<u64>, &'a TMeta);
+    type Item = MetaRange<&'a TMeta>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let Some((&include, rest_include)) = self.include.split_first() else {
@@ -139,7 +216,10 @@ impl<'a, TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> Iterat
             self.excluded = rest_exclude;
         };
 
-        Some((out_range, meta))
+        Some(MetaRange {
+            range: out_range,
+            meta,
+        })
     }
 }
 
@@ -156,12 +236,34 @@ mod tests {
         .unwrap();
         assert_eq!(
             vec!(
-                (NonZeroRange::new(10..20), &"first"),
-                (NonZeroRange::new(255..257), &"second")
+                MetaRange {
+                    range: NonZeroRange::new(10..20),
+                    meta: &"first"
+                },
+                MetaRange {
+                    range: NonZeroRange::new(255..257),
+                    meta: &"second"
+                }
             ),
             encoded.iter().collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn owned_iterator() {
+        let encoded = NonEmptyOrderedRanges::<u8, u8, _>::try_from_ordered_iter([
+            (10u32..20, "first".to_string()),
+            (255..257, "second".to_string()),
+        ])
+        .unwrap();
+        let collected: Vec<_> = encoded.into_iter().collect();
+        assert_eq!(2, collected.len());
+        assert_eq!(NonZeroRange::new(10..20), collected[0].range);
+        assert_eq!("first", collected[0].meta);
+        assert_eq!(NonZeroRange::new(255..257), collected[1].range);
+        assert_eq!("second", collected[1].meta);
+    }
+
     #[test]
     fn assert_big_gap_causes_error() {
         let error = NonEmptyOrderedRanges::<u16, u8, _>::try_from_ordered_iter([
