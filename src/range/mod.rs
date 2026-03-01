@@ -2,7 +2,6 @@
 /// Working with ranges or collections/iterators of ranges
 ///
 mod assert_sorted_iter;
-//mod flat_map_inplace;
 mod merge_ordered_iter;
 mod non_zero;
 
@@ -12,7 +11,6 @@ use std::{
 };
 
 pub use assert_sorted_iter::*;
-//pub use flat_map_inplace::*;
 pub use merge_ordered_iter::*;
 pub use non_zero::*;
 
@@ -53,6 +51,18 @@ impl<TIncluded, TExcluded, TMeta> Debug for NonEmptyOrderedRanges<TIncluded, TEx
 }
 
 impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Vec<TMeta>> {
+    pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta) -> Self
+    where
+        TRange: Into<u64> + Into<TIncluded> + Copy + std::ops::Sub<Output = TRange>,
+    {
+        let len = r.len().into();
+        Self {
+            initial_offset: r.start.into(),
+            included: vec![len],
+            excluded: Vec::new(),
+            meta: vec![meta],
+        }
+    }
     pub fn try_from_ordered_iter<TRange>(
         iter: impl IntoIterator<Item = (Range<TRange>, TMeta)>,
     ) -> Result<Self, String>
@@ -95,7 +105,7 @@ impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Ve
         }
 
         Ok(Self {
-            initial_offset: first_range.start.into(),
+            initial_offset: first_range.start,
             included,
             excluded,
             meta,
@@ -185,9 +195,7 @@ impl<
     type Item = MetaRange<TMeta::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Some(include) = self.include.next() else {
-            return None;
-        };
+        let include = self.include.next()?;
         let Some(meta) = self.meta.next() else {
             unreachable!("There must be more metadata");
         };

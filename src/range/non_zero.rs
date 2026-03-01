@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::num::NonZero;
 use std::ops::{Add, Deref, Range, Sub};
 
 /// NonZero is only checked during Debug and should not be relied upon for safety
@@ -47,7 +48,48 @@ impl<T: PartialOrd> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
     }
 }
 
+pub trait SignedNonZeroable: Sized {
+    type NonZero;
+    fn strict_add_nonzero(self, other: Self::NonZero) -> Self;
+}
+
+impl SignedNonZeroable for u8 {
+    type NonZero = NonZero<u8>;
+
+    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
+        self.strict_add(other.get())
+    }
+}
+impl SignedNonZeroable for u16 {
+    type NonZero = NonZero<u16>;
+
+    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
+        self.strict_add(other.get())
+    }
+}
+impl SignedNonZeroable for u32 {
+    type NonZero = NonZero<u32>;
+
+    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
+        self.strict_add(other.get())
+    }
+}
+impl SignedNonZeroable for u64 {
+    type NonZero = NonZero<u64>;
+
+    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
+        self.strict_add(other.get())
+    }
+}
+
 impl<T: PartialOrd + Debug> NonZeroRange<T> {
+    pub fn from_span(start: T, len: T::NonZero) -> Self
+    where
+        T: Copy + SignedNonZeroable,
+    {
+        let end = start.strict_add_nonzero(len);
+        Self(RangeUnchecked { start, end })
+    }
     pub fn new(range: Range<T>) -> Self {
         let r = Self(RangeUnchecked {
             start: range.start,
@@ -60,7 +102,7 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
         );
         r
     }
-    /// Safety
+    /// # Safety
     /// range.start has to be < range.end
     pub unsafe fn new_unchecked(range: Range<T>) -> Self {
         let r = Self(RangeUnchecked {
@@ -78,15 +120,13 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
     pub fn overlaps(&self, other: &Self) -> bool {
         self.start < other.end && other.start < self.end
     }
-
+}
+impl<T> NonZeroRange<T> {
     pub fn len(&self) -> T
     where
         T: Sub<Output = T> + Copy,
     {
         self.end - self.start
-    }
-    pub fn is_empty(&self) -> bool {
-        self.start == self.end
     }
 }
 

@@ -50,7 +50,6 @@ where
                 {
                     new.range = after_existing;
                     ordered_non_overlapping.insert(idx + 1, new);
-                } else {
                 }
                 return;
             } else
