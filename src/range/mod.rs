@@ -2,7 +2,7 @@
 /// Working with ranges or collections/iterators of ranges
 ///
 mod assert_sorted_iter;
-mod flat_map_inplace;
+//mod flat_map_inplace;
 mod merge_ordered_iter;
 mod non_zero;
 
@@ -12,7 +12,7 @@ use std::{
 };
 
 pub use assert_sorted_iter::*;
-pub use flat_map_inplace::*;
+//pub use flat_map_inplace::*;
 pub use merge_ordered_iter::*;
 pub use non_zero::*;
 
@@ -101,11 +101,21 @@ impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Ve
             meta,
         })
     }
-    pub fn iter(&self) -> OrderedRangeIter<'_, TIncluded, TExcluded, TMeta> {
+    pub fn iter(
+        &self,
+    ) -> OrderedRangeIter<
+        std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
+        std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
+        std::slice::Iter<'_, TMeta>,
+    >
+    where
+        TIncluded: Copy + Into<u64>,
+        TExcluded: Copy + Into<u64>,
+    {
         OrderedRangeIter {
-            include: &self.included,
-            excluded: &self.excluded,
-            meta: &self.meta,
+            include: self.included.iter().copied(),
+            excluded: self.excluded.iter().copied(),
+            meta: self.meta.iter(),
             offset: self.initial_offset,
         }
     }
@@ -115,10 +125,14 @@ impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterat
     for NonEmptyOrderedRanges<TIncluded, TExcluded, Vec<TMeta>>
 {
     type Item = MetaRange<TMeta>;
-    type IntoIter = OwnedOrderedRangeIter<TIncluded, TExcluded, TMeta>;
+    type IntoIter = OrderedRangeIter<
+        std::vec::IntoIter<TIncluded>,
+        std::vec::IntoIter<TExcluded>,
+        std::vec::IntoIter<TMeta>,
+    >;
 
     fn into_iter(self) -> Self::IntoIter {
-        OwnedOrderedRangeIter {
+        OrderedRangeIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             meta: self.meta.into_iter(),
@@ -155,65 +169,34 @@ impl<TMeta> MetaRange<TMeta> {
     }
 }
 
-pub struct OrderedRangeIter<'a, TIncluded, TExcluded, TMeta> {
-    include: &'a [TIncluded],
-    excluded: &'a [TExcluded],
-    meta: &'a [TMeta],
+pub struct OrderedRangeIter<TIncludedIter, TExcludedIter, TMetaIter: Iterator> {
+    include: TIncludedIter,
+    excluded: TExcludedIter,
+    meta: TMetaIter,
     offset: u64,
 }
 
-pub struct OwnedOrderedRangeIter<TIncluded, TExcluded, TMeta> {
-    include: std::vec::IntoIter<TIncluded>,
-    excluded: std::vec::IntoIter<TExcluded>,
-    meta: std::vec::IntoIter<TMeta>,
-    offset: u64,
-}
-
-impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> Iterator
-    for OwnedOrderedRangeIter<TIncluded, TExcluded, TMeta>
+impl<
+    TIncluded: Iterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TMeta: Iterator,
+> Iterator for OrderedRangeIter<TIncluded, TExcluded, TMeta>
 {
-    type Item = MetaRange<TMeta>;
+    type Item = MetaRange<TMeta::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let include = self.include.next()?;
-        let meta = self.meta.next().expect("There must be more metadata");
-
-        let out_range_end = self.offset + include.into();
-        let out_range = unsafe { NonZeroRange::new_unchecked(self.offset..out_range_end) };
-
-        if let Some(exclude) = self.excluded.next() {
-            self.offset = out_range_end + exclude.into();
-        }
-
-        Some(MetaRange {
-            range: out_range,
-            meta,
-        })
-    }
-}
-
-impl<'a, TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> Iterator
-    for OrderedRangeIter<'a, TIncluded, TExcluded, TMeta>
-{
-    type Item = MetaRange<&'a TMeta>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let Some((&include, rest_include)) = self.include.split_first() else {
+        let Some(include) = self.include.next() else {
             return None;
         };
-        let Some((meta, rest_meta)) = self.meta.split_first() else {
+        let Some(meta) = self.meta.next() else {
             unreachable!("There must be more metadata");
         };
-
-        self.include = rest_include;
-        self.meta = rest_meta;
 
         let out_range_end = self.offset + include.into();
         // Checked during construction, that start < end
         let out_range = unsafe { NonZeroRange::new_unchecked(self.offset..out_range_end) };
-        if let Some((&exclude, rest_exclude)) = self.excluded.split_first() {
+        if let Some(exclude) = self.excluded.next() {
             self.offset = out_range_end + exclude.into();
-            self.excluded = rest_exclude;
         };
 
         Some(MetaRange {
