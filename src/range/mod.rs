@@ -7,8 +7,11 @@ mod non_zero;
 
 use std::{
     fmt::{Debug, Display},
-    ops::Range,
+    iter::FusedIterator,
+    ops::{Range, RangeInclusive},
 };
+
+use range_set_blaze::{SortedDisjointMap, SortedStartsMap, ValueRef};
 
 pub use assert_sorted_iter::*;
 pub use merge_ordered_iter::*;
@@ -134,7 +137,7 @@ impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Ve
 impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterator
     for NonEmptyOrderedRanges<TIncluded, TExcluded, Vec<TMeta>>
 {
-    type Item = MetaRange<TMeta>;
+    type Item = (RangeInclusive<u64>, TMeta);
     type IntoIter = OrderedRangeIter<
         std::vec::IntoIter<TIncluded>,
         std::vec::IntoIter<TExcluded>,
@@ -192,7 +195,7 @@ impl<
     TMeta: Iterator,
 > Iterator for OrderedRangeIter<TIncluded, TExcluded, TMeta>
 {
-    type Item = MetaRange<TMeta::Item>;
+    type Item = (RangeInclusive<u64>, TMeta::Item);
 
     fn next(&mut self) -> Option<Self::Item> {
         let include = self.include.next()?;
@@ -201,17 +204,37 @@ impl<
         };
 
         let out_range_end = self.offset + include.into();
-        // Checked during construction, that start < end
-        let out_range = unsafe { NonZeroRange::new_unchecked(self.offset..out_range_end) };
+        let range = self.offset..=(out_range_end - 1);
         if let Some(exclude) = self.excluded.next() {
             self.offset = out_range_end + exclude.into();
         };
 
-        Some(MetaRange {
-            range: out_range,
-            meta,
-        })
+        Some((range, meta))
     }
+}
+
+impl<
+    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TMeta: Iterator,
+> FusedIterator for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+{
+}
+
+impl<
+    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TMeta: Iterator<Item: ValueRef>,
+> SortedStartsMap<u64, TMeta::Item> for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+{
+}
+
+impl<
+    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TMeta: Iterator<Item: ValueRef>,
+> SortedDisjointMap<u64, TMeta::Item> for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+{
 }
 
 #[cfg(test)]
@@ -226,16 +249,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            vec!(
-                MetaRange {
-                    range: NonZeroRange::new(10..20),
-                    meta: &"first"
-                },
-                MetaRange {
-                    range: NonZeroRange::new(255..257),
-                    meta: &"second"
-                }
-            ),
+            vec![(10u64..=19, &"first"), (255u64..=256, &"second")],
             encoded.iter().collect::<Vec<_>>()
         );
     }
@@ -249,10 +263,10 @@ mod tests {
         .unwrap();
         let collected: Vec<_> = encoded.into_iter().collect();
         assert_eq!(2, collected.len());
-        assert_eq!(NonZeroRange::new(10..20), collected[0].range);
-        assert_eq!("first", collected[0].meta);
-        assert_eq!(NonZeroRange::new(255..257), collected[1].range);
-        assert_eq!("second", collected[1].meta);
+        assert_eq!(10u64..=19, collected[0].0);
+        assert_eq!("first", collected[0].1);
+        assert_eq!(255u64..=256, collected[1].0);
+        assert_eq!("second", collected[1].1);
     }
 
     #[test]
