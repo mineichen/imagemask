@@ -8,3 +8,4 @@ itertools = "0.14.0"
 range-set-blaze = { version = "0.4", default-features = false }
 thiserror = "2.0.12"
 rkyv = { version = "0.8.15", optional = true }
+num = "0.4"

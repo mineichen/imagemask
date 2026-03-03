@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use std::num::NonZero;
-use std::ops::{Add, Deref, Range, Sub};
+use std::ops::{Add, Deref, Range, RangeInclusive, Sub};
 
 /// NonZero is only checked during Debug and should not be relied upon for safety
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,6 +82,27 @@ impl SignedNonZeroable for u64 {
     }
 }
 
+impl<T> From<Range<T>> for RangeUnchecked<T> {
+    fn from(value: Range<T>) -> Self {
+        RangeUnchecked {
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+impl<T: num::One + std::ops::Sub<Output = T> + std::ops::Add<Output = T>> From<RangeInclusive<T>>
+    for RangeUnchecked<T>
+{
+    fn from(value: RangeInclusive<T>) -> Self {
+        let (start, end) = value.into_inner();
+        RangeUnchecked {
+            start,
+            end: end - T::one(),
+        }
+    }
+}
+
 impl<T: PartialOrd + Debug> NonZeroRange<T> {
     pub fn from_span(start: T, len: T::NonZero) -> Self
     where
@@ -90,11 +111,8 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
         let end = start.strict_add_nonzero(len);
         Self(RangeUnchecked { start, end })
     }
-    pub fn new(range: Range<T>) -> Self {
-        let r = Self(RangeUnchecked {
-            start: range.start,
-            end: range.end,
-        });
+    pub fn new(into_range: impl Into<RangeUnchecked<T>>) -> Self {
+        let r = Self(into_range.into());
         assert!(
             r.start < r.end,
             "NonZeroRange must contain a element: {:?}",
@@ -104,11 +122,8 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
     }
     /// # Safety
     /// range.start has to be < range.end
-    pub unsafe fn new_unchecked(range: Range<T>) -> Self {
-        let r = Self(RangeUnchecked {
-            start: range.start,
-            end: range.end,
-        });
+    pub unsafe fn new_unchecked(into_range: impl Into<RangeUnchecked<T>>) -> Self {
+        let r = Self(into_range.into());
         debug_assert!(
             r.start < r.end,
             "NonZeroRange must contain a element: {:?}",
@@ -170,39 +185,39 @@ mod tests {
 
     #[test]
     fn non_overlapping_adjacent() {
-        test_both_way(0..5, 5..10, false);
+        test_both_way_overlap(0..5, 5..10, false);
     }
 
     #[test]
     fn overlapping() {
-        test_both_way(0..5, 3..7, true);
+        test_both_way_overlap(0..5, 3..7, true);
     }
 
     #[test]
     fn one_inside_other() {
-        test_both_way(2..4, 1..5, true);
+        test_both_way_overlap(2..4, 1..5, true);
     }
 
     #[test]
     fn same_ranges() {
-        test_both_way(3..7, 3..7, true);
+        test_both_way_overlap(3..7, 3..7, true);
     }
 
     #[test]
     fn completely_separate() {
-        test_both_way(0..2, 3..5, false);
+        test_both_way_overlap(0..2, 3..5, false);
     }
 
     #[test]
     fn overlapping_start() {
-        test_both_way(0..5, 4..6, true);
+        test_both_way_overlap(0..5, 4..6, true);
     }
 
     #[test]
     fn overlapping_end() {
-        test_both_way(3..7, 0..4, true);
+        test_both_way_overlap(3..7, 0..4, true);
     }
-    fn test_both_way(a: Range<u32>, b: Range<u32>, expected: bool) {
+    fn test_both_way_overlap(a: Range<u32>, b: Range<u32>, expected: bool) {
         assert_eq!(expected, unsafe {
             NonZeroRange::new_unchecked(a.clone()).overlaps(&NonZeroRange::new_unchecked(b.clone()))
         });
