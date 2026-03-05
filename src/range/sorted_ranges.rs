@@ -1,12 +1,12 @@
 use std::{
     fmt::{Debug, Display},
     iter::FusedIterator,
-    ops::{Range, RangeInclusive},
+    marker::PhantomData,
+    num::NonZero,
+    ops::Range,
 };
 
-use range_set_blaze::{SortedDisjoint, SortedDisjointMap, SortedStarts, SortedStartsMap, ValueRef};
-
-use crate::NonZeroRange;
+use crate::{CreateRange, NonZeroRange};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -86,20 +86,41 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             excluded,
         })
     }
-    pub fn iter(
+
+    pub fn iter<T: CreateRange>(
         &self,
-    ) -> SortedRangeIter<
+    ) -> SortedRangesIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
         std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
+        T,
     >
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
     {
-        SortedRangeIter {
+        SortedRangesIter {
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
             offset: self.initial_offset,
+            _out: PhantomData,
+        }
+    }
+    pub fn iter_owned<T: CreateRange>(
+        &self,
+    ) -> SortedRangesIter<
+        std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
+        std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
+        T,
+    >
+    where
+        TIncluded: Copy + Into<u64>,
+        TExcluded: Copy + Into<u64>,
+    {
+        SortedRangesIter {
+            include: self.included.iter().copied(),
+            excluded: self.excluded.iter().copied(),
+            offset: self.initial_offset,
+            _out: PhantomData,
         }
     }
 }
@@ -107,82 +128,75 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
 impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>> IntoIterator
     for SortedRanges<TIncluded, TExcluded>
 {
-    type Item = RangeInclusive<u64>;
-    type IntoIter = SortedRangeIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>>;
+    type Item = NonZeroRange<u64>;
+    type IntoIter = SortedRangesIter<
+        std::vec::IntoIter<TIncluded>,
+        std::vec::IntoIter<TExcluded>,
+        NonZeroRange<u64>,
+    >;
 
     fn into_iter(self) -> Self::IntoIter {
-        SortedRangeIter {
+        SortedRangesIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             offset: self.initial_offset,
+            _out: PhantomData,
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct MetaRange<TMeta> {
-    pub range: NonZeroRange<u64>,
-    pub meta: TMeta,
-}
-
-impl<TMeta> MetaRange<TMeta> {
-    pub fn copy_with_offset(&self, offset: i64) -> Self
-    where
-        TMeta: Copy,
-    {
-        Self {
-            range: self.range.with_offset(offset),
-            meta: self.meta,
-        }
-    }
-
-    pub fn clone_with_offset(&self, offset: i64) -> Self
-    where
-        TMeta: Clone,
-    {
-        Self {
-            range: self.range.with_offset(offset),
-            meta: self.meta.clone(),
-        }
-    }
-}
-
-pub struct SortedRangeIter<TIncludedIter, TExcludedIter> {
+pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut> {
     include: TIncludedIter,
     excluded: TExcludedIter,
     offset: u64,
+    _out: PhantomData<TOut>,
 }
 
-impl<TIncluded: Iterator<Item: Copy + Into<u64>>, TExcluded: Iterator<Item: Copy + Into<u64>>>
-    Iterator for SortedRangeIter<TIncluded, TExcluded>
+impl<TIncluded, TExcluded, TOut> Iterator for SortedRangesIter<TIncluded, TExcluded, TOut>
+where
+    TIncluded: Iterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TOut: CreateRange<Item = u64>,
 {
-    type Item = RangeInclusive<u64>;
+    type Item = TOut;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let include = self.include.next()?;
+        let include = self.include.next()?.into();
 
-        let out_range_end = self.offset + include.into();
-        let range = self.offset..=(out_range_end - 1);
+        // Checked during construction, that start < end
+        let out_range = TOut::new_debug_checked(self.offset, NonZero::new(include).unwrap());
+        let out_range_end = self.offset + include;
         if let Some(exclude) = self.excluded.next() {
             self.offset = out_range_end + exclude.into();
         };
 
-        Some(range)
+        Some(out_range)
     }
 }
 
-impl<TIncluded: FusedIterator<Item: Copy + Into<u64>>, TExcluded: Iterator<Item: Copy + Into<u64>>>
-    FusedIterator for SortedRangeIter<TIncluded, TExcluded>
+impl<TIncluded, TExcluded, TOut> FusedIterator for SortedRangesIter<TIncluded, TExcluded, TOut>
+where
+    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TOut: CreateRange<Item = u64>,
 {
 }
 
-impl<TIncluded: FusedIterator<Item: Copy + Into<u64>>, TExcluded: Iterator<Item: Copy + Into<u64>>>
-    SortedStarts<u64> for SortedRangeIter<TIncluded, TExcluded>
+#[cfg(feature = "range-set-blaze")]
+impl<TIncluded, TExcluded> range_set_blaze::SortedStarts<u64>
+    for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
+where
+    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
 {
 }
 
-impl<TIncluded: FusedIterator<Item: Copy + Into<u64>>, TExcluded: Iterator<Item: Copy + Into<u64>>>
-    SortedDisjoint<u64> for SortedRangeIter<TIncluded, TExcluded>
+#[cfg(feature = "range-set-blaze")]
+impl<TIncluded, TExcluded> range_set_blaze::SortedDisjoint<u64>
+    for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
+where
+    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+    TExcluded: Iterator<Item: Copy + Into<u64>>,
 {
 }
 
@@ -195,17 +209,25 @@ mod tests {
         let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257]).unwrap();
         assert_eq!(
             vec![10u64..=19, 255u64..=256],
-            encoded.iter().collect::<Vec<_>>()
+            encoded.iter_owned().collect::<Vec<_>>()
         );
     }
 
     #[test]
     fn owned_iterator() {
         let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257]).unwrap();
-        let collected: Vec<_> = encoded.into_iter().collect();
+        let collected: Vec<_> = encoded.iter_owned().collect();
         assert_eq!(2, collected.len());
         assert_eq!(10u64..=19, collected[0]);
         assert_eq!(255u64..=256, collected[1]);
+    }
+    #[test]
+    fn owned_into_iterator() {
+        let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257]).unwrap();
+        let collected: Vec<_> = encoded.into_iter().collect();
+        assert_eq!(2, collected.len());
+        assert_eq!(NonZeroRange::new(10u64..20), collected[0]);
+        assert_eq!(NonZeroRange::new(255u64..257), collected[1]);
     }
 
     #[test]

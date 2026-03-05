@@ -23,7 +23,8 @@
         # Nightly toolchain for Miri
         nightlyToolchain = inputs.fenix.packages.${system}.latest.withComponents [
           "cargo"
-          "rustc"
+          "clippy"
+	  "rustc"
           "rustfmt"
           "miri"
         ];

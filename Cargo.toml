@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 itertools = "0.14.0"
-range-set-blaze = { version = "0.4", default-features = false }
+range-set-blaze = { version = "0.4", default-features = false, optional = true }
 thiserror = "2.0.12"
 rkyv = { version = "0.8.15", optional = true }
-num = "0.4"
+num-traits = "0.2"

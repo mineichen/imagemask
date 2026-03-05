@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 ///
 /// Working with ranges or collections/iterators of ranges
 ///
@@ -23,5 +25,54 @@ pub struct OrderedRangeItem<TMeta> {
 impl<TMeta> OrderedRangeItem<TMeta> {
     pub fn comparator(&self) -> (u32, u32) {
         (self.range.start, u32::MAX - self.priority)
+    }
+}
+
+pub trait CreateRange: Sized {
+    type Item: SignedNonZeroable;
+    type ListItem<TMeta>: From<(Self, TMeta)>;
+    fn new_debug_checked(
+        start: Self::Item,
+        len: <Self::Item as SignedNonZeroable>::NonZero,
+    ) -> Self;
+}
+
+impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<T, Output = T>> CreateRange
+    for std::ops::RangeInclusive<T>
+{
+    type Item = T;
+    type ListItem<TMeta> = (Self, TMeta);
+
+    fn new_debug_checked(
+        start: Self::Item,
+        len: <Self::Item as SignedNonZeroable>::NonZero,
+    ) -> Self {
+        let end = start.strict_add_nonzero(len) - T::one();
+        start..=end
+    }
+}
+
+impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
+    type Item = T;
+    type ListItem<TMeta> = (Self, TMeta);
+
+    fn new_debug_checked(
+        start: Self::Item,
+        len: <Self::Item as SignedNonZeroable>::NonZero,
+    ) -> Self {
+        let end = start.strict_add_nonzero(len);
+        start..end
+    }
+}
+
+impl<T: SignedNonZeroable + Copy + Debug + PartialEq> CreateRange for NonZeroRange<T> {
+    type Item = T;
+    type ListItem<TMeta> = MetaRange<Self, TMeta>;
+
+    fn new_debug_checked(
+        start: Self::Item,
+        len: <Self::Item as SignedNonZeroable>::NonZero,
+    ) -> Self {
+        NonZeroRange::from_span(start, len)
     }
 }

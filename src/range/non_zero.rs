@@ -91,8 +91,8 @@ impl<T> From<Range<T>> for RangeUnchecked<T> {
     }
 }
 
-impl<T: num::One + std::ops::Sub<Output = T> + std::ops::Add<Output = T>> From<RangeInclusive<T>>
-    for RangeUnchecked<T>
+impl<T: num_traits::One + std::ops::Sub<Output = T> + std::ops::Add<Output = T>>
+    From<RangeInclusive<T>> for RangeUnchecked<T>
 {
     fn from(value: RangeInclusive<T>) -> Self {
         let (start, end) = value.into_inner();
@@ -103,7 +103,7 @@ impl<T: num::One + std::ops::Sub<Output = T> + std::ops::Add<Output = T>> From<R
     }
 }
 
-impl<T: PartialOrd + Debug> NonZeroRange<T> {
+impl<T> NonZeroRange<T> {
     pub fn from_span(start: T, len: T::NonZero) -> Self
     where
         T: Copy + SignedNonZeroable,
@@ -111,6 +111,9 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
         let end = start.strict_add_nonzero(len);
         Self(RangeUnchecked { start, end })
     }
+}
+
+impl<T: PartialOrd + Debug> NonZeroRange<T> {
     pub fn new(into_range: impl Into<RangeUnchecked<T>>) -> Self {
         let r = Self(into_range.into());
         assert!(

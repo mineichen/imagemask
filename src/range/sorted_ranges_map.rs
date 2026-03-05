@@ -1,12 +1,12 @@
 use std::{
     fmt::{Debug, Display},
     iter::FusedIterator,
-    ops::{Range, RangeInclusive},
+    marker::PhantomData,
+    num::NonZero,
+    ops::Range,
 };
 
-use range_set_blaze::{SortedDisjointMap, SortedStartsMap, ValueRef};
-
-use crate::NonZeroRange;
+use crate::{CreateRange, NonZeroRange};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -17,13 +17,13 @@ use crate::NonZeroRange;
 /// Meta is expected to be indexable for each included range
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
-pub struct NonEmptyOrderedRanges<TIncluded, TExcluded, TMeta> {
+pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
     initial_offset: u64,
     included: Vec<TIncluded>,
     excluded: Vec<TExcluded>,
     meta: TMeta,
 }
-impl<TIncluded, TExcluded, TMeta> Debug for NonEmptyOrderedRanges<TIncluded, TExcluded, TMeta> {
+impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded, TMeta> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NonEmptyOrderedRanges")
             .field("range_count", &self.included.len())
@@ -31,7 +31,7 @@ impl<TIncluded, TExcluded, TMeta> Debug for NonEmptyOrderedRanges<TIncluded, TEx
     }
 }
 
-impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Vec<TMeta>> {
+impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>> {
     pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta) -> Self
     where
         TRange: Into<u64> + Into<TIncluded> + Copy + std::ops::Sub<Output = TRange>,
@@ -92,53 +92,80 @@ impl<TIncluded, TExcluded, TMeta> NonEmptyOrderedRanges<TIncluded, TExcluded, Ve
             meta,
         })
     }
-    pub fn iter(
+    pub fn iter<T: CreateRange>(
         &self,
-    ) -> OrderedRangeIter<
+    ) -> SortedRangesMapIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
         std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
         std::slice::Iter<'_, TMeta>,
+        T,
     >
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
     {
-        OrderedRangeIter {
+        SortedRangesMapIter {
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
             meta: self.meta.iter(),
             offset: self.initial_offset,
+            _out: PhantomData,
+        }
+    }
+
+    pub fn iter_owned<T: CreateRange>(
+        self,
+    ) -> SortedRangesMapIter<
+        std::vec::IntoIter<TIncluded>,
+        std::vec::IntoIter<TExcluded>,
+        std::vec::IntoIter<TMeta>,
+        T,
+    > {
+        SortedRangesMapIter {
+            include: self.included.into_iter(),
+            excluded: self.excluded.into_iter(),
+            meta: self.meta.into_iter(),
+            offset: self.initial_offset,
+            _out: PhantomData,
         }
     }
 }
 
 impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterator
-    for NonEmptyOrderedRanges<TIncluded, TExcluded, Vec<TMeta>>
+    for SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>
 {
-    type Item = (RangeInclusive<u64>, TMeta);
-    type IntoIter = OrderedRangeIter<
+    type Item = MetaRange<NonZeroRange<u64>, TMeta>;
+    type IntoIter = SortedRangesMapIter<
         std::vec::IntoIter<TIncluded>,
         std::vec::IntoIter<TExcluded>,
         std::vec::IntoIter<TMeta>,
+        NonZeroRange<u64>,
     >;
 
     fn into_iter(self) -> Self::IntoIter {
-        OrderedRangeIter {
+        SortedRangesMapIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             meta: self.meta.into_iter(),
             offset: self.initial_offset,
+            _out: PhantomData,
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct MetaRange<TMeta> {
-    pub range: NonZeroRange<u64>,
+pub struct MetaRange<TRange, TMeta> {
+    pub range: TRange,
     pub meta: TMeta,
 }
 
-impl<TMeta> MetaRange<TMeta> {
+impl<TRange, TMeta> From<(TRange, TMeta)> for MetaRange<TRange, TMeta> {
+    fn from((range, meta): (TRange, TMeta)) -> Self {
+        Self { range, meta }
+    }
+}
+
+impl<TMeta> MetaRange<NonZeroRange<u64>, TMeta> {
     pub fn copy_with_offset(&self, offset: i64) -> Self
     where
         TMeta: Copy,
@@ -160,96 +187,127 @@ impl<TMeta> MetaRange<TMeta> {
     }
 }
 
-pub struct OrderedRangeIter<TIncludedIter, TExcludedIter, TMetaIter: Iterator> {
+pub struct SortedRangesMapIter<TIncludedIter, TExcludedIter, TMetaIter: Iterator, TRange> {
     include: TIncludedIter,
     excluded: TExcludedIter,
     meta: TMetaIter,
     offset: u64,
+    _out: PhantomData<TRange>,
 }
 
 impl<
     TIncluded: Iterator<Item: Copy + Into<u64>>,
     TExcluded: Iterator<Item: Copy + Into<u64>>,
     TMeta: Iterator,
-> Iterator for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+    TRange: CreateRange<Item = u64>,
+> Iterator for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
 {
-    type Item = (RangeInclusive<u64>, TMeta::Item);
+    type Item = TRange::ListItem<TMeta::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let include = self.include.next()?;
+        let include = self.include.next()?.into();
         let Some(meta) = self.meta.next() else {
             unreachable!("There must be more metadata");
         };
 
-        let out_range_end = self.offset + include.into();
-        let range = self.offset..=(out_range_end - 1);
+        let out_range_end = self.offset + include;
+        // Checked during construction, that start < end
+        let out_range = TRange::new_debug_checked(self.offset, NonZero::new(include).unwrap());
         if let Some(exclude) = self.excluded.next() {
             self.offset = out_range_end + exclude.into();
         };
 
-        Some((range, meta))
+        Some((out_range, meta).into())
     }
 }
 
-impl<
+impl<TIncluded, TExcluded, TMeta, TRange> FusedIterator
+    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
+where
     TIncluded: FusedIterator<Item: Copy + Into<u64>>,
     TExcluded: Iterator<Item: Copy + Into<u64>>,
     TMeta: Iterator,
-> FusedIterator for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+    TRange: CreateRange<Item = u64>,
 {
 }
 
+#[cfg(feature = "range-set-blaze")]
 impl<
     TIncluded: FusedIterator<Item: Copy + Into<u64>>,
     TExcluded: Iterator<Item: Copy + Into<u64>>,
-    TMeta: Iterator<Item: ValueRef>,
-> SortedStartsMap<u64, TMeta::Item> for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+    TMeta: Iterator<Item: range_set_blaze::ValueRef>,
+> range_set_blaze::SortedStartsMap<u64, TMeta::Item>
+    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<u64>>
 {
 }
 
+#[cfg(feature = "range-set-blaze")]
 impl<
     TIncluded: FusedIterator<Item: Copy + Into<u64>>,
     TExcluded: Iterator<Item: Copy + Into<u64>>,
-    TMeta: Iterator<Item: ValueRef>,
-> SortedDisjointMap<u64, TMeta::Item> for OrderedRangeIter<TIncluded, TExcluded, TMeta>
+    TMeta: Iterator<Item: range_set_blaze::ValueRef>,
+> range_set_blaze::SortedDisjointMap<u64, TMeta::Item>
+    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<u64>>
 {
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{num::NonZero, ops::RangeInclusive};
+
     use super::*;
 
     #[test]
     fn range_with_initial_offset() {
-        let encoded = NonEmptyOrderedRanges::<u8, u8, _>::try_from_ordered_iter([
+        let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..20, "first"),
             (255..257, "second"),
         ])
         .unwrap();
         assert_eq!(
             vec![(10u64..=19, &"first"), (255u64..=256, &"second")],
-            encoded.iter().collect::<Vec<_>>()
+            encoded.iter::<RangeInclusive<u64>>().collect::<Vec<_>>()
         );
     }
 
     #[test]
+    fn owned_iterator_inclusive() {
+        let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
+            (10u32..20, "first".to_string()),
+            (255..257, "second".to_string()),
+        ])
+        .unwrap();
+        let collected: Vec<_> = encoded.iter_owned::<RangeInclusive<u64>>().collect();
+        assert_eq!(10u64..=19, collected[0].0);
+        assert_eq!("first", collected[0].1);
+        assert_eq!(255u64..=256, collected[1].0);
+        assert_eq!("second", collected[1].1);
+        assert_eq!(2, collected.len());
+    }
+    #[test]
     fn owned_iterator() {
-        let encoded = NonEmptyOrderedRanges::<u8, u8, _>::try_from_ordered_iter([
+        let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..20, "first".to_string()),
             (255..257, "second".to_string()),
         ])
         .unwrap();
         let collected: Vec<_> = encoded.into_iter().collect();
         assert_eq!(2, collected.len());
-        assert_eq!(10u64..=19, collected[0].0);
-        assert_eq!("first", collected[0].1);
-        assert_eq!(255u64..=256, collected[1].0);
-        assert_eq!("second", collected[1].1);
+        assert_eq!(
+            NonZeroRange::from_span(10, const { NonZero::new(10).unwrap() }),
+            collected[0].range
+        );
+        assert_eq!("first", collected[0].meta);
+        assert_eq!(
+            NonZeroRange::from_span(255, const { NonZero::new(2).unwrap() },),
+            collected[1].range
+        );
+        assert_eq!("second", collected[1].meta);
     }
 
     #[test]
     fn assert_big_gap_causes_error() {
-        let error = NonEmptyOrderedRanges::<u16, u8, _>::try_from_ordered_iter([
+        let error = SortedRangesMap::<u16, u8, _>::try_from_ordered_iter([
             (10u32..20, "first"),
             (276..280, "second"),
         ])
@@ -259,22 +317,20 @@ mod tests {
 
     #[test]
     fn assert_big_ranges_cause_error() {
-        let error =
-            NonEmptyOrderedRanges::<u8, u16, _>::try_from_ordered_iter([(10u32..280, "first")])
-                .unwrap_err();
+        let error = SortedRangesMap::<u8, u16, _>::try_from_ordered_iter([(10u32..280, "first")])
+            .unwrap_err();
         assert!(error.contains("out of range"), "{error}");
     }
     #[test]
     fn zero_ranges_cause_error() {
-        let error =
-            NonEmptyOrderedRanges::<u8, u8, _>::try_from_ordered_iter([(10u32..10, "first")])
-                .unwrap_err();
+        let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([(10u32..10, "first")])
+            .unwrap_err();
         assert!(error.contains("> 10"), "{error}");
     }
 
     #[test]
     fn overlapping_cause_error() {
-        let error = NonEmptyOrderedRanges::<u8, u8, _>::try_from_ordered_iter([
+        let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..12, "first"),
             (11..12, "second"),
         ])
