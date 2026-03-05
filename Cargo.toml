@@ -11,4 +11,4 @@ rkyv = { version = "0.8.15", optional = true }
 num-traits = "0.2"
 
 [features]
-default = ["range-set-blaze"]
+# default = ["range-set-blaze", "rkyv"]

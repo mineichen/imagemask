@@ -94,6 +94,32 @@ pub struct SourceIterator<'a, TIncluded, TExcluded> {
     cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
     offset: u64,
 }
+
+impl<'a, TIncluded, TExcluded> FusedIterator for SourceIterator<'a, TIncluded, TExcluded>
+where
+    TIncluded: Copy + Into<u64>,
+    TExcluded: Copy + Into<u64>,
+{
+}
+
+#[cfg(feature = "range-set-blaze")]
+impl<'a, TIncluded, TExcluded> range_set_blaze::SortedStarts<u64>
+    for SourceIterator<'a, TIncluded, TExcluded>
+where
+    TIncluded: Copy + Into<u64>,
+    TExcluded: Copy + Into<u64>,
+{
+}
+
+#[cfg(feature = "range-set-blaze")]
+impl<'a, TIncluded, TExcluded> range_set_blaze::SortedDisjoint<u64>
+    for SourceIterator<'a, TIncluded, TExcluded>
+where
+    TIncluded: Copy + Into<u64>,
+    TExcluded: Copy + Into<u64>,
+{
+}
+
 impl<'a, TIncluded, TExcluded> Iterator for SourceIterator<'a, TIncluded, TExcluded>
 where
     TIncluded: Copy + Into<u64>,
@@ -132,7 +158,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
 
-    /// Split the collection into a Iterator<Item=RangeInclusive<u64>> and a function, which accepts a Iterator<Item=RangeInclusive<u64>>
+    /// Split the collection into a Iterator<Item=RangeInclusive<u64>> and a RangeSink, which accepts a Iterator<Item=RangeInclusive<u64>>
     /// This allows in_place operations without allocating memory, if the self contained equal or more items than the one to be collected
     /// If more items are yielded than consumed, a intermediate cache is used
     /// ```
@@ -238,19 +264,15 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
     pub fn iter_owned<T: CreateRange>(
-        &self,
-    ) -> SortedRangesIter<
-        std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
-        std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
-        T,
-    >
+        self,
+    ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
     {
         SortedRangesIter {
-            include: self.included.iter().copied(),
-            excluded: self.excluded.iter().copied(),
+            include: self.included.into_iter(),
+            excluded: self.excluded.into_iter(),
             offset: self.initial_offset,
             _out: PhantomData,
         }
@@ -335,6 +357,22 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "range-set-blaze")]
+    #[test]
+    fn combine_inline() {
+        use range_set_blaze::SortedDisjoint;
+
+        let mut a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 30..40]).unwrap();
+        let b = SortedRanges::<u8, u8>::try_from_ordered_iter([20u32..30, 41..45]).unwrap();
+
+        let (a_iter, a_sink) = a.split();
+        let b_iter = b.iter::<RangeInclusive<u64>>();
+        a_sink.process(b_iter.union(a_iter));
+
+        assert_eq!(vec![10u64..40, 41..45], a.iter_owned().collect::<Vec<_>>());
+        assert_eq!(vec![20u64..30, 41..45], b.iter_owned().collect::<Vec<_>>());
+    }
 
     #[test]
     fn range_with_initial_offset() {
