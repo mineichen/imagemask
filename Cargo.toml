@@ -9,3 +9,6 @@ range-set-blaze = { version = "0.4", default-features = false, optional = true }
 thiserror = "2.0.12"
 rkyv = { version = "0.8.15", optional = true }
 num-traits = "0.2"
+
+[features]
+default = ["range-set-blaze"]

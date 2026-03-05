@@ -1,9 +1,11 @@
 use std::{
+    cell::RefCell,
     fmt::{Debug, Display},
     iter::FusedIterator,
     marker::PhantomData,
     num::NonZero,
-    ops::Range,
+    ops::{Range, RangeInclusive},
+    rc::Rc,
 };
 
 use crate::{CreateRange, NonZeroRange};
@@ -30,6 +32,93 @@ impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
     }
 }
 
+pub struct RangeSink<'a, TIter, TIncluded, TExcluded> {
+    cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
+    _phantom: PhantomData<TIter>,
+}
+impl<'a, T, TIncluded, TExcluded> RangeSink<'a, T, TIncluded, TExcluded>
+where
+    T: Iterator<Item = RangeInclusive<u64>>,
+    TIncluded: TryFrom<u64, Error: Debug>,
+    TExcluded: TryFrom<u64, Error: Debug>,
+{
+    pub fn process(self, mut items: T) {
+        if let Some(first) = items.next() {
+            let mut write_offset = {
+                let mut x = self.cell.borrow_mut();
+                let col = &mut x.0;
+                let (start, end) = first.into_inner();
+                col.initial_offset = start;
+
+                let len = 1 + end - start;
+                col.included[0] = len.try_into().unwrap();
+                end + 1
+            };
+            let mut write_pos = 1;
+            for item in items {
+                let mut x = self.cell.borrow_mut();
+                let (col, read_pos) = &mut *x;
+                if write_pos < *read_pos {
+                    let (start, end) = item.into_inner();
+                    let end = end + 1;
+                    let len = end - start;
+
+                    let Ok(excluded) = (start - write_offset).try_into() else {
+                        panic!(
+                            "Range {start}..={end} is too far apart from it's predecessor ({}) to fit into {}",
+                            start - write_offset,
+                            std::any::type_name::<TExcluded>()
+                        );
+                    };
+                    col.excluded[write_pos - 1] = excluded;
+
+                    let Ok(included) = len.try_into() else {
+                        panic!(
+                            "Range {start}..{len} is too long to fit into {}",
+                            std::any::type_name::<TIncluded>()
+                        )
+                    };
+                    col.included[write_pos] = included;
+
+                    write_offset = end;
+                    write_pos += 1;
+                } else {
+                    todo!()
+                }
+            }
+        }
+    }
+}
+
+pub struct SourceIterator<'a, TIncluded, TExcluded> {
+    cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
+    offset: u64,
+}
+impl<'a, TIncluded, TExcluded> Iterator for SourceIterator<'a, TIncluded, TExcluded>
+where
+    TIncluded: Copy + Into<u64>,
+    TExcluded: Copy + Into<u64>,
+{
+    type Item = RangeInclusive<u64>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut x = self.cell.borrow_mut();
+        let (col, read_pos) = &mut *x;
+        let include = (*col.included.get(*read_pos)?).into();
+
+        // Checked during construction, that start < end
+        let out_range =
+            RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
+        let out_range_end = self.offset + include;
+        if let Some(&exclude) = col.excluded.get(*read_pos) {
+            self.offset = out_range_end + exclude.into();
+        };
+        *read_pos += 1;
+
+        Some(out_range)
+    }
+}
+
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     pub fn new<TRange>(r: NonZeroRange<TRange>) -> Self
     where
@@ -42,6 +131,49 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             excluded: Vec::new(),
         }
     }
+
+    /// Split the collection into a Iterator<Item=RangeInclusive<u64>> and a function, which accepts a Iterator<Item=RangeInclusive<u64>>
+    /// This allows in_place operations without allocating memory, if the self contained equal or more items than the one to be collected
+    /// If more items are yielded than consumed, a intermediate cache is used
+    /// ```
+    /// use std::ops::RangeInclusive;
+    /// use imagemask::SortedRanges;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60])?;
+    /// let (iter, sink) = ranges.split();
+    /// sink.process(iter.map(|x| {
+    ///     let (start, end) = x.into_inner();
+    ///     (start+5)..=(end + 5)
+    /// }));
+    /// assert_eq!(
+    ///     vec!(15..25, 35..50, 55..65),
+    ///     ranges.iter_owned().collect::<Vec<_>>()
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn split<T: Iterator<Item = RangeInclusive<u64>>>(
+        &mut self,
+    ) -> (
+        SourceIterator<'_, TIncluded, TExcluded>,
+        RangeSink<'_, T, TIncluded, TExcluded>,
+    ) {
+        let offset = self.initial_offset;
+
+        let cell = Rc::new(std::cell::RefCell::new((self, 0usize)));
+        (
+            SourceIterator {
+                cell: cell.clone(),
+                offset,
+            },
+            RangeSink {
+                cell,
+                _phantom: PhantomData,
+            },
+        )
+    }
+
     pub fn try_from_ordered_iter<TRange>(
         iter: impl IntoIterator<Item = Range<TRange>>,
     ) -> Result<Self, String>
