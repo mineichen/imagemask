@@ -245,6 +245,15 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         })
     }
 
+    pub fn len(&self) -> usize {
+        self.included.len()
+    }
+
+    pub fn len_nonzero(&self) -> NonZero<usize> {
+        NonZero::new(self.included.len())
+            .expect("Constructors make sure, there is always at least one Range")
+    }
+
     pub fn iter<T: CreateRange>(
         &self,
     ) -> SortedRangesIter<
