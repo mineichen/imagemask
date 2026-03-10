@@ -6,6 +6,9 @@ use std::{
     ops::Range,
 };
 
+#[cfg(feature = "range-set-blaze")]
+use range_set_blaze::Integer;
+
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
@@ -250,8 +253,8 @@ where
     TExcluded: Iterator<Item: Copy + Into<TRange::Item>>,
     TMeta: Iterator,
     TRange: CreateRange,
-    TRange::Item: TryFrom<TIncluded, Error: Debug>
-        + TryFrom<TExcluded, Error: Debug>
+    TRange::Item: TryFrom<TIncluded::Item, Error: Debug>
+        + TryFrom<TExcluded::Item, Error: Debug>
         + SignedNonZeroable
         + Copy
         + std::ops::Add<Output = TRange::Item>,
@@ -259,22 +262,38 @@ where
 }
 
 #[cfg(feature = "range-set-blaze")]
-impl<
-    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
+impl<TIncluded, TExcluded, TMeta, TRangeItem>
+    range_set_blaze::SortedStartsMap<TRangeItem, TMeta::Item>
+    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
+where
+    TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
+    TExcluded: Iterator<Item: Copy> + Into<TRangeItem>,
     TMeta: Iterator<Item: range_set_blaze::ValueRef>,
-> range_set_blaze::SortedStartsMap<u64, TMeta::Item>
-    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<u64>>
+    TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
+        + TryFrom<TExcluded::Item, Error: Debug>
+        + From<TExcluded::Item>
+        + Copy
+        + Integer
+        + SignedNonZeroable
+        + std::ops::Add<Output = TRangeItem>,
 {
 }
 
 #[cfg(feature = "range-set-blaze")]
-impl<
-    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
+impl<TIncluded, TExcluded, TMeta, TRangeItem>
+    range_set_blaze::SortedDisjointMap<TRangeItem, TMeta::Item>
+    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
+where
+    TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
+    TExcluded: Iterator<Item: Copy> + Into<TRangeItem>,
     TMeta: Iterator<Item: range_set_blaze::ValueRef>,
-> range_set_blaze::SortedDisjointMap<u64, TMeta::Item>
-    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<u64>>
+    TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
+        + TryFrom<TExcluded::Item, Error: Debug>
+        + From<TExcluded::Item>
+        + Copy
+        + Integer
+        + SignedNonZeroable
+        + std::ops::Add<Output = TRangeItem>,
 {
 }
 

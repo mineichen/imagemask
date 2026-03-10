@@ -12,6 +12,7 @@ mod sorted_ranges_map;
 pub use assert_sorted_iter::*;
 pub use merge_ordered_iter::*;
 pub use non_zero::*;
+use range_set_blaze::Integer;
 pub use sorted_ranges::*;
 pub use sorted_ranges_map::*;
 
@@ -37,9 +38,7 @@ pub trait CreateRange: Sized {
     ) -> Self;
 }
 
-impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<T, Output = T>> CreateRange
-    for std::ops::RangeInclusive<T>
-{
+impl<T: SignedNonZeroable + Copy + Integer> CreateRange for std::ops::RangeInclusive<T> {
     type Item = T;
     type ListItem<TMeta> = (Self, TMeta);
 
@@ -47,7 +46,7 @@ impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<T, Output = T
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
     ) -> Self {
-        let end = start.strict_add_nonzero(len) - T::one();
+        let end = start.strict_add_nonzero(len).sub_one();
         start..=end
     }
 }
