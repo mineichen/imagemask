@@ -119,6 +119,22 @@ impl SignedNonZeroable for u64 {
     }
 }
 
+impl SignedNonZeroable for usize {
+    type NonZero = NonZero<usize>;
+
+    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
+        self.strict_add(other.get())
+    }
+
+    fn create_non_zero(self) -> Option<Self::NonZero> {
+        NonZero::new(self)
+    }
+
+    unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
+        unsafe { NonZero::new_unchecked(self) }
+    }
+}
+
 impl<T> From<Range<T>> for RangeUnchecked<T> {
     fn from(value: Range<T>) -> Self {
         RangeUnchecked {

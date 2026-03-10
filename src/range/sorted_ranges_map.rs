@@ -6,7 +6,7 @@ use std::{
     ops::Range,
 };
 
-use crate::{CreateRange, NonZeroRange};
+use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -92,7 +92,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             meta,
         })
     }
-    pub fn iter<T: CreateRange>(
+    pub fn iter<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
         &self,
     ) -> SortedRangesMapIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
@@ -108,7 +108,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
             meta: self.meta.iter(),
-            offset: self.initial_offset,
+            offset: self.initial_offset.try_into().unwrap(),
             _out: PhantomData,
         }
     }
@@ -122,7 +122,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             .expect("Constructors make sure, there is always at least one Range")
     }
 
-    pub fn iter_owned<T: CreateRange>(
+    pub fn iter_owned<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
         self,
     ) -> SortedRangesMapIter<
         std::vec::IntoIter<TIncluded>,
@@ -134,7 +134,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             meta: self.meta.into_iter(),
-            offset: self.initial_offset,
+            offset: self.initial_offset.try_into().unwrap(),
             _out: PhantomData,
         }
     }
@@ -196,34 +196,47 @@ impl<TMeta> MetaRange<NonZeroRange<u64>, TMeta> {
     }
 }
 
-pub struct SortedRangesMapIter<TIncludedIter, TExcludedIter, TMetaIter: Iterator, TRange> {
+pub struct SortedRangesMapIter<
+    TIncludedIter,
+    TExcludedIter,
+    TMetaIter: Iterator,
+    TRange: CreateRange,
+> {
     include: TIncludedIter,
     excluded: TExcludedIter,
     meta: TMetaIter,
-    offset: u64,
+    offset: TRange::Item,
     _out: PhantomData<TRange>,
 }
 
 impl<
-    TIncluded: Iterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TIncluded: Iterator<Item: Copy + TryInto<TRange::Item, Error: Debug>>,
+    TExcluded: Iterator<Item: Copy + TryInto<TRange::Item, Error: Debug>>,
     TMeta: Iterator,
-    TRange: CreateRange<Item = u64>,
+    TRange: CreateRange,
 > Iterator for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
+where
+    TRange::Item: TryFrom<TIncluded::Item, Error: Debug>
+        + TryFrom<TExcluded::Item, Error: Debug>
+        + SignedNonZeroable
+        + Copy
+        + std::ops::Add<Output = TRange::Item>,
 {
     type Item = TRange::ListItem<TMeta::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let include = self.include.next()?.into();
+        let include = self.include.next()?.try_into().unwrap();
         let Some(meta) = self.meta.next() else {
             unreachable!("There must be more metadata");
         };
 
         let out_range_end = self.offset + include;
+        let offset_item = TRange::Item::try_from(self.offset).expect("Cast shouldn't overflow");
+        let len_item = TRange::Item::try_from(include).expect("Cast include shouldn't overflow");
         // Checked during construction, that start < end
-        let out_range = TRange::new_debug_checked(self.offset, NonZero::new(include).unwrap());
+        let out_range = TRange::new_debug_checked(offset_item, len_item.create_non_zero().unwrap());
         if let Some(exclude) = self.excluded.next() {
-            self.offset = out_range_end + exclude.into();
+            self.offset = out_range_end + exclude.try_into().unwrap();
         };
 
         Some((out_range, meta).into())
@@ -233,10 +246,15 @@ impl<
 impl<TIncluded, TExcluded, TMeta, TRange> FusedIterator
     for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
 where
-    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
+    TIncluded: FusedIterator<Item: Copy + Into<TRange::Item>>,
+    TExcluded: Iterator<Item: Copy + Into<TRange::Item>>,
     TMeta: Iterator,
-    TRange: CreateRange<Item = u64>,
+    TRange: CreateRange,
+    TRange::Item: TryFrom<TIncluded, Error: Debug>
+        + TryFrom<TExcluded, Error: Debug>
+        + SignedNonZeroable
+        + Copy
+        + std::ops::Add<Output = TRange::Item>,
 {
 }
 
