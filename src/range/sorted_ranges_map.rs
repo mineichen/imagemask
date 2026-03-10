@@ -162,7 +162,7 @@ impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterat
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct MetaRange<TRange, TMeta> {
     pub range: TRange,
     pub meta: TMeta,

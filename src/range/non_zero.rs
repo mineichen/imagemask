@@ -3,7 +3,7 @@ use std::num::NonZero;
 use std::ops::{Add, Deref, Range, RangeInclusive, Sub};
 
 /// NonZero is only checked during Debug and should not be relied upon for safety
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NonZeroRange<T>(RangeUnchecked<T>);
 
 impl<T: Debug> Debug for NonZeroRange<T> {
@@ -13,7 +13,7 @@ impl<T: Debug> Debug for NonZeroRange<T> {
 }
 
 /// Exists, because std::ops::Range is not Copy
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RangeUnchecked<T> {
     pub start: T,
     pub end: T,
@@ -25,6 +25,10 @@ impl NonZeroRange<u64> {
             start: self.0.start.strict_add_signed(offset),
             end: self.0.end.strict_add_signed(offset),
         })
+    }
+
+    pub fn increment_length(&mut self) {
+        self.0.end = self.0.end.checked_add(1).expect("Never overflows");
     }
 }
 
@@ -51,6 +55,8 @@ impl<T: PartialOrd> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
 pub trait SignedNonZeroable: Sized {
     type NonZero;
     fn strict_add_nonzero(self, other: Self::NonZero) -> Self;
+    fn create_non_zero(self) -> Option<Self::NonZero>;
+    unsafe fn create_non_zero_unchecked(self) -> Self::NonZero;
 }
 
 impl SignedNonZeroable for u8 {
@@ -59,12 +65,27 @@ impl SignedNonZeroable for u8 {
     fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
         self.strict_add(other.get())
     }
+
+    fn create_non_zero(self) -> Option<Self::NonZero> {
+        NonZero::new(self)
+    }
+
+    unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
+        unsafe { NonZero::new_unchecked(self) }
+    }
 }
 impl SignedNonZeroable for u16 {
     type NonZero = NonZero<u16>;
 
     fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
         self.strict_add(other.get())
+    }
+
+    fn create_non_zero(self) -> Option<Self::NonZero> {
+        NonZero::new(self)
+    }
+    unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
+        unsafe { NonZero::new_unchecked(self) }
     }
 }
 impl SignedNonZeroable for u32 {
@@ -73,12 +94,28 @@ impl SignedNonZeroable for u32 {
     fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
         self.strict_add(other.get())
     }
+
+    fn create_non_zero(self) -> Option<Self::NonZero> {
+        NonZero::new(self)
+    }
+
+    unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
+        unsafe { NonZero::new_unchecked(self) }
+    }
 }
 impl SignedNonZeroable for u64 {
     type NonZero = NonZero<u64>;
 
     fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
         self.strict_add(other.get())
+    }
+
+    fn create_non_zero(self) -> Option<Self::NonZero> {
+        NonZero::new(self)
+    }
+
+    unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
+        unsafe { NonZero::new_unchecked(self) }
     }
 }
 
@@ -139,12 +176,20 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
         self.start < other.end && other.start < self.end
     }
 }
-impl<T> NonZeroRange<T> {
-    pub fn len(&self) -> T
-    where
-        T: Sub<Output = T> + Copy,
-    {
+impl<T> NonZeroRange<T>
+where
+    T: Sub<Output = T> + Copy,
+{
+    pub fn len(&self) -> T {
         self.end - self.start
+    }
+
+    pub fn len_non_zero(&self) -> T::NonZero
+    where
+        T: SignedNonZeroable,
+    {
+        // We don't check every numeric operation, so len could be zero, but this is UB already
+        T::create_non_zero(self.end - self.start).expect("A operation probably overflowed")
     }
 }
 
