@@ -6,9 +6,6 @@ use std::{
     ops::Range,
 };
 
-#[cfg(feature = "range-set-blaze")]
-use range_set_blaze::Integer;
-
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
@@ -273,8 +270,10 @@ where
         + TryFrom<TExcluded::Item, Error: Debug>
         + From<TExcluded::Item>
         + Copy
-        + Integer
+        + range_set_blaze::Integer
+        + num_traits::One
         + SignedNonZeroable
+        + std::ops::Sub<Output = TRangeItem>
         + std::ops::Add<Output = TRangeItem>,
 {
 }
@@ -291,8 +290,10 @@ where
         + TryFrom<TExcluded::Item, Error: Debug>
         + From<TExcluded::Item>
         + Copy
-        + Integer
+        + range_set_blaze::Integer
+        + num_traits::One
         + SignedNonZeroable
+        + std::ops::Sub<Output = TRangeItem>
         + std::ops::Add<Output = TRangeItem>,
 {
 }
