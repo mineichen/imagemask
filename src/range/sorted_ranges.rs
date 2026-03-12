@@ -8,7 +8,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{CreateRange, NonZeroRange};
+use crate::{CreateRange, NonZeroRange, RangeToOffsetsIter};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -20,7 +20,6 @@ use crate::{CreateRange, NonZeroRange};
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
 pub struct SortedRanges<TIncluded, TExcluded> {
-    initial_offset: u64,
     included: Vec<TIncluded>,
     excluded: Vec<TExcluded>,
 }
@@ -42,49 +41,16 @@ where
     TIncluded: TryFrom<u64, Error: Debug>,
     TExcluded: TryFrom<u64, Error: Debug>,
 {
-    pub fn process(self, mut items: T) {
-        if let Some(first) = items.next() {
-            let mut write_offset = {
-                let mut x = self.cell.borrow_mut();
-                let col = &mut x.0;
-                let (start, end) = first.into_inner();
-                col.initial_offset = start;
-
-                let len = 1 + end - start;
-                col.included[0] = len.try_into().unwrap();
-                end + 1
-            };
-            let mut write_pos = 1;
-            for item in items {
-                let mut x = self.cell.borrow_mut();
-                let (col, read_pos) = &mut *x;
-                if write_pos < *read_pos {
-                    let (start, end) = item.into_inner();
-                    let end = end + 1;
-                    let len = end - start;
-
-                    let Ok(excluded) = (start - write_offset).try_into() else {
-                        panic!(
-                            "Range {start}..={end} is too far apart from it's predecessor ({}) to fit into {}",
-                            start - write_offset,
-                            std::any::type_name::<TExcluded>()
-                        );
-                    };
-                    col.excluded[write_pos - 1] = excluded;
-
-                    let Ok(included) = len.try_into() else {
-                        panic!(
-                            "Range {start}..{len} is too long to fit into {}",
-                            std::any::type_name::<TIncluded>()
-                        )
-                    };
-                    col.included[write_pos] = included;
-
-                    write_offset = end;
-                    write_pos += 1;
-                } else {
-                    todo!()
-                }
+    pub fn process(self, items: T) {
+        let offsets_iter = RangeToOffsetsIter::<_, TIncluded, TExcluded>::new(items);
+        for (i, (excluded, included)) in offsets_iter.enumerate() {
+            let mut x = self.cell.borrow_mut();
+            let (col, read_pos) = &mut *x;
+            if i < *read_pos {
+                col.excluded[i] = excluded;
+                col.included[i] = included;
+            } else {
+                todo!()
             }
         }
     }
@@ -112,15 +78,13 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let mut x = self.cell.borrow_mut();
         let (col, read_pos) = &mut *x;
-        let include = (*col.included.get(*read_pos)?).into();
+        let exclude = (*col.excluded.get(*read_pos)?).into();
+        self.offset += exclude;
 
-        // Checked during construction, that start < end
+        let include = (*col.included.get(*read_pos)?).into();
         let out_range =
             RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
-        let out_range_end = self.offset + include;
-        if let Some(&exclude) = col.excluded.get(*read_pos) {
-            self.offset = out_range_end + exclude.into();
-        };
+        self.offset += include;
         *read_pos += 1;
 
         Some(out_range)
@@ -130,13 +94,12 @@ where
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     pub fn new<TRange>(r: NonZeroRange<TRange>) -> Self
     where
-        TRange: Into<u64> + Into<TIncluded> + Copy + std::ops::Sub<Output = TRange>,
+        TRange: Into<TIncluded> + Into<TExcluded> + Copy + std::ops::Sub<Output = TRange>,
+        TIncluded: TryFrom<u64>,
     {
-        let len = r.len().into();
         Self {
-            initial_offset: r.start.into(),
-            included: vec![len],
-            excluded: Vec::new(),
+            included: vec![r.len().into()],
+            excluded: vec![r.start.into()],
         }
     }
 
@@ -167,13 +130,11 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         SourceIterator<'_, TIncluded, TExcluded>,
         RangeSink<'_, T, TIncluded, TExcluded>,
     ) {
-        let offset = self.initial_offset;
-
         let cell = Rc::new(std::cell::RefCell::new((self, 0usize)));
         (
             SourceIterator {
                 cell: cell.clone(),
-                offset,
+                offset: 0,
             },
             RangeSink {
                 cell,
@@ -208,10 +169,12 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         let Some((first_range, first_len)) = iter.next().transpose()? else {
             return Err("Requires at least one item".into());
         };
-        let mut included = Vec::<TIncluded>::with_capacity(iter.size_hint().0);
-        let mut excluded = Vec::<TExcluded>::with_capacity(iter.size_hint().0);
+        let initial_offset = TExcluded::try_from(first_range.start).map_err(|e| e.to_string())?;
+        let mut included = Vec::<TIncluded>::with_capacity(iter.size_hint().0 + 1);
+        let mut excluded = Vec::<TExcluded>::with_capacity(iter.size_hint().0 + 1);
 
         included.push(first_len);
+        excluded.push(initial_offset);
         let mut cur_pos = first_range.end;
         for x in iter {
             let (next_range, next_len) = x?;
@@ -220,11 +183,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             cur_pos = next_range.end;
         }
 
-        Ok(Self {
-            initial_offset: first_range.start,
-            included,
-            excluded,
-        })
+        Ok(Self { included, excluded })
     }
 
     pub fn len(&self) -> usize {
@@ -250,7 +209,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         SortedRangesIter {
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
-            offset: self.initial_offset,
+            offset: 0,
             _out: PhantomData,
         }
     }
@@ -264,7 +223,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         SortedRangesIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
-            offset: self.initial_offset,
+            offset: 0,
             _out: PhantomData,
         }
     }
@@ -284,7 +243,7 @@ impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>> IntoIterator
         SortedRangesIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
-            offset: self.initial_offset,
+            offset: 0,
             _out: PhantomData,
         }
     }
@@ -306,14 +265,12 @@ where
     type Item = TOut;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let include = self.include.next()?.into();
+        let exclude = self.excluded.next()?.into();
+        self.offset += exclude;
 
-        // Checked during construction, that start < end
+        let include = self.include.next()?.into();
         let out_range = TOut::new_debug_checked(self.offset, NonZero::new(include).unwrap());
-        let out_range_end = self.offset + include;
-        if let Some(exclude) = self.excluded.next() {
-            self.offset = out_range_end + exclude.into();
-        };
+        self.offset += include;
 
         Some(out_range)
     }
