@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{CreateRange, NonZeroRange, RangeToOffsetsIter};
+use crate::{CreateRange, NonZeroRange, RangeToOffsetsIter, SignedNonZeroable};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -151,8 +151,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     ///     (start+5)..=(end + 5)
     /// }));
     /// assert_eq!(
-    ///     vec!(15..25, 35..50, 55..65),
-    ///     ranges.iter_owned().collect::<Vec<_>>()
+    ///     vec!(15u64..25, 35..50, 55..65),
+    ///     ranges.iter_owned::<std::ops::Range<u64>>().collect::<Vec<_>>()
     /// );
     /// # Ok(())
     /// # }
@@ -230,7 +230,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             .expect("Constructors make sure, there is always at least one Range")
     }
 
-    pub fn iter<T: CreateRange>(
+    pub fn iter<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
         &self,
     ) -> SortedRangesIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
@@ -244,11 +244,11 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         SortedRangesIter {
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
-            offset: 0,
+            offset: T::Item::try_from(0u64).unwrap(),
             _out: PhantomData,
         }
     }
-    pub fn iter_owned<T: CreateRange>(
+    pub fn iter_owned<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
         self,
     ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
     where
@@ -258,7 +258,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         SortedRangesIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
-            offset: 0,
+            offset: T::Item::try_from(0u64).unwrap(),
             _out: PhantomData,
         }
     }
@@ -278,34 +278,41 @@ impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>> IntoIterator
         SortedRangesIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
-            offset: 0,
+            offset: 0u64,
             _out: PhantomData,
         }
     }
 }
 
-pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut> {
+pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut: CreateRange> {
     include: TIncludedIter,
     excluded: TExcludedIter,
-    offset: u64,
+    offset: TOut::Item,
     _out: PhantomData<TOut>,
 }
 
 impl<TIncluded, TExcluded, TOut> Iterator for SortedRangesIter<TIncluded, TExcluded, TOut>
 where
-    TIncluded: Iterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
-    TOut: CreateRange<Item = u64>,
+    TIncluded: Iterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
+    TExcluded: Iterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
+    TOut: CreateRange,
+    TOut::Item: TryFrom<TIncluded::Item, Error: Debug>
+        + TryFrom<TExcluded::Item, Error: Debug>
+        + SignedNonZeroable
+        + Copy
+        + std::ops::Add<Output = TOut::Item>,
 {
     type Item = TOut;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let exclude = self.excluded.next()?.into();
-        self.offset += exclude;
+        let exclude = self.excluded.next()?.try_into().unwrap();
+        self.offset = self.offset + exclude;
 
-        let include = self.include.next()?.into();
-        let out_range = TOut::new_debug_checked(self.offset, NonZero::new(include).unwrap());
-        self.offset += include;
+        let include = self.include.next()?.try_into().unwrap();
+        let offset_item = TOut::Item::try_from(self.offset).expect("Cast shouldn't overflow");
+        let len_item = TOut::Item::try_from(include).expect("Cast include shouldn't overflow");
+        let out_range = TOut::new_debug_checked(offset_item, len_item.create_non_zero().unwrap());
+        self.offset = self.offset + include;
 
         Some(out_range)
     }
@@ -313,9 +320,14 @@ where
 
 impl<TIncluded, TExcluded, TOut> FusedIterator for SortedRangesIter<TIncluded, TExcluded, TOut>
 where
-    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
-    TOut: CreateRange<Item = u64>,
+    TIncluded: FusedIterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
+    TExcluded: Iterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
+    TOut: CreateRange,
+    TOut::Item: TryFrom<TIncluded::Item, Error: Debug>
+        + TryFrom<TExcluded::Item, Error: Debug>
+        + SignedNonZeroable
+        + Copy
+        + std::ops::Add<Output = TOut::Item>,
 {
 }
 
@@ -438,5 +450,19 @@ mod tests {
     fn overlapping_cause_error() {
         let error = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..12, 11..12]).unwrap_err();
         assert!(error.contains("> 12"), "{error}");
+    }
+
+    #[test]
+    fn iterate_with_different_output_types() {
+        let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
+        
+        let as_range: Vec<_> = encoded.iter::<Range<u64>>().collect();
+        assert_eq!(vec![10u64..15, 30..35], as_range);
+        
+        let as_range_inclusive: Vec<_> = encoded.iter::<RangeInclusive<u64>>().collect();
+        assert_eq!(vec![10u64..=14, 30..=34], as_range_inclusive);
+        
+        let as_nonzero_range: Vec<_> = encoded.iter::<NonZeroRange<u64>>().collect();
+        assert_eq!(vec![NonZeroRange::new(10u64..15), NonZeroRange::new(30..35)], as_nonzero_range);
     }
 }
