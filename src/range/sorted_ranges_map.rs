@@ -12,13 +12,12 @@ use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
 /// Included represents the number of pixels to include, excluded encodes the gap between two included ranges
 ///
-/// Included.len() = excluded.len() + 1
+/// Included.len() = excluded.len()
 ///
 /// Meta is expected to be indexable for each included range
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
 pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
-    initial_offset: u64,
     included: Vec<TIncluded>,
     excluded: Vec<TExcluded>,
     meta: TMeta,
@@ -34,13 +33,11 @@ impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded
 impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>> {
     pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta) -> Self
     where
-        TRange: Into<u64> + Into<TIncluded> + Copy + std::ops::Sub<Output = TRange>,
+        TRange: Into<TIncluded> + Into<TExcluded> + Copy + std::ops::Sub<Output = TRange>,
     {
-        let len = r.len().into();
         Self {
-            initial_offset: r.start.into(),
-            included: vec![len],
-            excluded: Vec::new(),
+            included: vec![r.len().into()],
+            excluded: vec![r.start.into()],
             meta: vec![meta],
         }
     }
@@ -67,16 +64,11 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             let end = range.end.into();
             create_checked::<TIncluded>(start, end).map(|x| (start..end, x, meta))
         });
-        let Some((first_range, first_len, first_meta)) = iter.next().transpose()? else {
-            return Err("Requires at least one item".into());
-        };
+
+        let mut cur_pos = 0;
         let mut included = Vec::<TIncluded>::with_capacity(iter.size_hint().0);
         let mut excluded = Vec::<TExcluded>::with_capacity(iter.size_hint().0);
         let mut meta = Vec::<TMeta>::with_capacity(iter.size_hint().0);
-
-        included.push(first_len);
-        meta.push(first_meta);
-        let mut cur_pos = first_range.end;
         for x in iter {
             let (next_range, next_len, next_meta) = x?;
             excluded.push(create_checked(cur_pos, next_range.start)?);
@@ -85,14 +77,17 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             cur_pos = next_range.end;
         }
 
+        if included.is_empty() {
+            return Err("Requires at least one item".into());
+        };
+
         Ok(Self {
-            initial_offset: first_range.start,
             included,
             excluded,
             meta,
         })
     }
-    pub fn iter<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
+    pub fn iter<T: CreateRange<Item: Default>>(
         &self,
     ) -> SortedRangesMapIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
@@ -108,7 +103,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
             meta: self.meta.iter(),
-            offset: self.initial_offset.try_into().unwrap(),
+            offset: Default::default(),
             _out: PhantomData,
         }
     }
@@ -122,7 +117,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             .expect("Constructors make sure, there is always at least one Range")
     }
 
-    pub fn iter_owned<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
+    pub fn iter_owned<T: CreateRange<Item: Default>>(
         self,
     ) -> SortedRangesMapIter<
         std::vec::IntoIter<TIncluded>,
@@ -134,7 +129,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             meta: self.meta.into_iter(),
-            offset: self.initial_offset.try_into().unwrap(),
+            offset: Default::default(),
             _out: PhantomData,
         }
     }
@@ -156,7 +151,7 @@ impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterat
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             meta: self.meta.into_iter(),
-            offset: self.initial_offset,
+            offset: 0,
             _out: PhantomData,
         }
     }
@@ -225,19 +220,21 @@ where
     type Item = TRange::ListItem<TMeta::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let include = self.include.next()?.try_into().unwrap();
+        let exclude = self.excluded.next()?.try_into().unwrap();
+        self.offset = self.offset + exclude;
+
+        let Some(include) = self.include.next() else {
+            unreachable!("There must be more include");
+        };
+        let include = include.try_into().unwrap();
         let Some(meta) = self.meta.next() else {
             unreachable!("There must be more metadata");
         };
 
-        let out_range_end = self.offset + include;
         let offset_item = TRange::Item::try_from(self.offset).expect("Cast shouldn't overflow");
         let len_item = TRange::Item::try_from(include).expect("Cast include shouldn't overflow");
-        // Checked during construction, that start < end
         let out_range = TRange::new_debug_checked(offset_item, len_item.create_non_zero().unwrap());
-        if let Some(exclude) = self.excluded.next() {
-            self.offset = out_range_end + exclude.try_into().unwrap();
-        };
+        self.offset = self.offset + include;
 
         Some((out_range, meta).into())
     }
