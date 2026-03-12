@@ -102,24 +102,6 @@ where
 {
 }
 
-#[cfg(feature = "range-set-blaze")]
-impl<'a, TIncluded, TExcluded> range_set_blaze::SortedStarts<u64>
-    for SourceIterator<'a, TIncluded, TExcluded>
-where
-    TIncluded: Copy + Into<u64>,
-    TExcluded: Copy + Into<u64>,
-{
-}
-
-#[cfg(feature = "range-set-blaze")]
-impl<'a, TIncluded, TExcluded> range_set_blaze::SortedDisjoint<u64>
-    for SourceIterator<'a, TIncluded, TExcluded>
-where
-    TIncluded: Copy + Into<u64>,
-    TExcluded: Copy + Into<u64>,
-{
-}
-
 impl<'a, TIncluded, TExcluded> Iterator for SourceIterator<'a, TIncluded, TExcluded>
 where
     TIncluded: Copy + Into<u64>,
@@ -345,32 +327,49 @@ where
 {
 }
 
-#[cfg(feature = "range-set-blaze")]
-impl<TIncluded, TExcluded> range_set_blaze::SortedStarts<u64>
-    for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
-where
-    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
-{
-}
+#[cfg(feature = "range-set-blaze-0_5")]
+mod range_set_blaze_0_5_interop {
+    use range_set_blaze_0_5::{SortedDisjoint, SortedStarts};
 
-#[cfg(feature = "range-set-blaze")]
-impl<TIncluded, TExcluded> range_set_blaze::SortedDisjoint<u64>
-    for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
-where
-    TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-    TExcluded: Iterator<Item: Copy + Into<u64>>,
-{
+    use super::*;
+    impl<'a, TIncluded, TExcluded> SortedStarts<u64> for SourceIterator<'a, TIncluded, TExcluded>
+    where
+        TIncluded: Copy + Into<u64>,
+        TExcluded: Copy + Into<u64>,
+    {
+    }
+
+    impl<'a, TIncluded, TExcluded> SortedDisjoint<u64> for SourceIterator<'a, TIncluded, TExcluded>
+    where
+        TIncluded: Copy + Into<u64>,
+        TExcluded: Copy + Into<u64>,
+    {
+    }
+    impl<TIncluded, TExcluded> SortedStarts<u64>
+        for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
+    where
+        TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+        TExcluded: Iterator<Item: Copy + Into<u64>>,
+    {
+    }
+
+    impl<TIncluded, TExcluded> SortedDisjoint<u64>
+        for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
+    where
+        TIncluded: FusedIterator<Item: Copy + Into<u64>>,
+        TExcluded: Iterator<Item: Copy + Into<u64>>,
+    {
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(feature = "range-set-blaze")]
+    #[cfg(feature = "range-set-blaze-0_5")]
     #[test]
     fn combine_inline() {
-        use range_set_blaze::SortedDisjoint;
+        use range_set_blaze_0_5::SortedDisjoint;
 
         let mut a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 30..40]).unwrap();
         let b = SortedRanges::<u8, u8>::try_from_ordered_iter([20u32..30, 41..45]).unwrap();

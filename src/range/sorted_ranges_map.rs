@@ -257,45 +257,45 @@ where
         + std::ops::Add<Output = TRange::Item>,
 {
 }
+#[cfg(feature = "range-set-blaze-0_5")]
+mod range_set_blaze_0_5_interop {
+    use super::*;
+    use range_set_blaze_0_5::{Integer, SortedDisjointMap, SortedStartsMap, ValueRef};
+    use std::ops::RangeInclusive;
 
-#[cfg(feature = "range-set-blaze")]
-impl<TIncluded, TExcluded, TMeta, TRangeItem>
-    range_set_blaze::SortedStartsMap<TRangeItem, TMeta::Item>
-    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
-where
-    TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
-    TExcluded: Iterator<Item: Copy> + Into<TRangeItem>,
-    TMeta: Iterator<Item: range_set_blaze::ValueRef>,
-    TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
-        + TryFrom<TExcluded::Item, Error: Debug>
-        + From<TExcluded::Item>
-        + Copy
-        + range_set_blaze::Integer
-        + num_traits::One
-        + SignedNonZeroable
-        + std::ops::Sub<Output = TRangeItem>
-        + std::ops::Add<Output = TRangeItem>,
-{
-}
+    impl<TIncluded, TExcluded, TMeta, TRangeItem> SortedStartsMap<TRangeItem, TMeta::Item>
+        for SortedRangesMapIter<TIncluded, TExcluded, TMeta, RangeInclusive<TRangeItem>>
+    where
+        TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
+        TExcluded: Iterator<Item: Copy + Into<TRangeItem>>,
+        TMeta: Iterator<Item: ValueRef>,
+        TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
+            + TryFrom<TExcluded::Item, Error: Debug>
+            + Copy
+            + Integer
+            + num_traits::One
+            + SignedNonZeroable
+            + std::ops::Sub<Output = TRangeItem>
+            + std::ops::Add<Output = TRangeItem>,
+    {
+    }
 
-#[cfg(feature = "range-set-blaze")]
-impl<TIncluded, TExcluded, TMeta, TRangeItem>
-    range_set_blaze::SortedDisjointMap<TRangeItem, TMeta::Item>
-    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
-where
-    TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
-    TExcluded: Iterator<Item: Copy> + Into<TRangeItem>,
-    TMeta: Iterator<Item: range_set_blaze::ValueRef>,
-    TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
-        + TryFrom<TExcluded::Item, Error: Debug>
-        + From<TExcluded::Item>
-        + Copy
-        + range_set_blaze::Integer
-        + num_traits::One
-        + SignedNonZeroable
-        + std::ops::Sub<Output = TRangeItem>
-        + std::ops::Add<Output = TRangeItem>,
-{
+    impl<TIncluded, TExcluded, TMeta, TRangeItem> SortedDisjointMap<TRangeItem, TMeta::Item>
+        for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
+    where
+        TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
+        TExcluded: Iterator<Item: Copy + Into<TRangeItem>>,
+        TMeta: Iterator<Item: ValueRef>,
+        TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
+            + TryFrom<TExcluded::Item, Error: Debug>
+            + Copy
+            + range_set_blaze_0_5::Integer
+            + num_traits::One
+            + SignedNonZeroable
+            + std::ops::Sub<Output = TRangeItem>
+            + std::ops::Add<Output = TRangeItem>,
+    {
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +303,39 @@ mod tests {
     use std::{num::NonZero, ops::RangeInclusive};
 
     use super::*;
+
+    #[cfg(feature = "range-set-blaze-0_5")]
+    #[test]
+    fn combine_inline() {
+        use range_set_blaze_0_5::SortedDisjointMap;
+
+        let a = SortedRangesMap::<u8, u8, Vec<&'static str>>::try_from_ordered_iter([
+            (10u32..30, "a_first"),
+            (42..50, "a_second"),
+        ])
+        .unwrap();
+        let b = SortedRangesMap::<u8, u8, Vec<&'static str>>::try_from_ordered_iter([
+            (20u32..30, "b_first"),
+            (41..45, "b_second"),
+        ])
+        .unwrap();
+
+        let a_iter = a.iter::<RangeInclusive<u64>>();
+        let b_iter = b.iter::<RangeInclusive<u64>>();
+        let result = b_iter
+            .union(a_iter)
+            .map(|(r, m)| (*r.start()..(*r.end() + 1), *m))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            vec![
+                (10u64..30, "a_first"),
+                (41..42, "b_second"),
+                (42..50, "a_second")
+            ],
+            result
+        );
+    }
 
     #[test]
     fn range_with_initial_offset() {

@@ -65,7 +65,7 @@ impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
     }
 }
 
-impl<T: SignedNonZeroable + Copy + Debug + PartialEq> CreateRange for NonZeroRange<T> {
+impl<T: SignedNonZeroable + Copy + PartialEq> CreateRange for NonZeroRange<T> {
     type Item = T;
     type ListItem<TMeta> = MetaRange<Self, TMeta>;
 
