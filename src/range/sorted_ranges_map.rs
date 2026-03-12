@@ -1,9 +1,12 @@
 use std::{
+    cell::RefCell,
+    collections::VecDeque,
     fmt::{Debug, Display},
     iter::FusedIterator,
     marker::PhantomData,
     num::NonZero,
-    ops::Range,
+    ops::{Range, RangeInclusive},
+    rc::Rc,
 };
 
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
@@ -59,7 +62,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             T::try_from(end - start).map_err(|e| e.to_string())
         }
 
-        let mut iter = iter.into_iter().map(|(range, meta)| {
+        let iter = iter.into_iter().map(|(range, meta)| {
             let start = range.start.into();
             let end = range.end.into();
             create_checked::<TIncluded>(start, end).map(|x| (start..end, x, meta))
@@ -132,6 +135,179 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             offset: Default::default(),
             _out: PhantomData,
         }
+    }
+
+    pub fn split<T: Iterator<Item = (RangeInclusive<u64>, TMeta)>>(
+        &mut self,
+    ) -> (
+        SourceIteratorMap<'_, TIncluded, TExcluded, TMeta>,
+        RangeSinkMap<'_, T, TIncluded, TExcluded, TMeta>,
+    ) {
+        let original_len = self.included.len();
+        let cell = Rc::new(RefCell::new((self, 0usize)));
+        (
+            SourceIteratorMap {
+                cell: cell.clone(),
+                offset: 0,
+                original_len,
+            },
+            RangeSinkMap {
+                cell,
+                original_len,
+                _phantom: PhantomData,
+            },
+        )
+    }
+}
+
+pub struct RangeSinkMap<'a, TIter, TIncluded, TExcluded, TMeta> {
+    cell: Rc<
+        RefCell<(
+            &'a mut SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>,
+            usize,
+        )>,
+    >,
+    original_len: usize,
+    _phantom: PhantomData<TIter>,
+}
+
+pub struct RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta> {
+    iter: TIter,
+    prev_end: u64,
+    _phantom: PhantomData<(TIncluded, TExcluded, TMeta)>,
+}
+
+impl<TIter, TIncluded, TExcluded, TMeta> RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta> {
+    pub fn new(iter: TIter) -> Self {
+        Self {
+            iter,
+            prev_end: 0,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<TIter, TIncluded, TExcluded, TMeta> Iterator
+    for RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta>
+where
+    TIter: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
+    TIncluded: TryFrom<u64, Error: Debug>,
+    TExcluded: TryFrom<u64, Error: Debug>,
+{
+    type Item = (TExcluded, TIncluded, TMeta);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (range, meta) = self.iter.next()?;
+        let (start, end) = range.into_inner();
+        let len = end - start + 1;
+        let gap = start - self.prev_end;
+        self.prev_end = start + len;
+        let excluded = gap.try_into().unwrap();
+        let included = len.try_into().unwrap();
+        Some((excluded, included, meta))
+    }
+}
+
+impl<'a, T, TIncluded, TExcluded, TMeta> RangeSinkMap<'a, T, TIncluded, TExcluded, TMeta>
+where
+    T: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
+    TIncluded: TryFrom<u64, Error: Debug>,
+    TExcluded: TryFrom<u64, Error: Debug>,
+{
+    pub fn process(self, items: T) {
+        let offsets_iter = RangeToOffsetsIterMap::<_, TIncluded, TExcluded, TMeta>::new(items);
+        let mut cache: VecDeque<(TExcluded, TIncluded, TMeta)> = VecDeque::new();
+        let mut write_pos = 0;
+        let original_len = self.original_len;
+
+        let write_tuple =
+            |col: &mut SortedRangesMap<_, _, Vec<_>>, (excl, incl, meta), write_pos: &mut usize| {
+                if *write_pos < col.included.len() {
+                    col.excluded[*write_pos] = excl;
+                    col.included[*write_pos] = incl;
+                    col.meta[*write_pos] = meta;
+                } else {
+                    col.excluded.push(excl);
+                    col.included.push(incl);
+                    col.meta.push(meta);
+                }
+                *write_pos += 1;
+            };
+
+        for tuple in offsets_iter {
+            let mut x = self.cell.borrow_mut();
+            let (read_pos, col) = (x.1, &mut x.0);
+            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
+                write_tuple(col, tuple, &mut write_pos);
+            } else {
+                cache.push_back(tuple);
+                while (write_pos < read_pos || read_pos >= original_len)
+                    && let Some(t) = cache.pop_front()
+                {
+                    write_tuple(col, t, &mut write_pos)
+                }
+            }
+        }
+
+        let mut x = self.cell.borrow_mut();
+        let col = &mut x.0;
+        while let Some(tuple) = cache.pop_front() {
+            write_tuple(col, tuple, &mut write_pos);
+        }
+
+        col.included.truncate(write_pos);
+        col.excluded.truncate(write_pos);
+        col.meta.truncate(write_pos);
+    }
+}
+
+pub struct SourceIteratorMap<'a, TIncluded, TExcluded, TMeta> {
+    cell: Rc<
+        RefCell<(
+            &'a mut SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>,
+            usize,
+        )>,
+    >,
+    offset: u64,
+    original_len: usize,
+}
+
+impl<'a, TIncluded, TExcluded, TMeta> FusedIterator
+    for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+where
+    TIncluded: Copy + Into<u64>,
+    TExcluded: Copy + Into<u64>,
+    TMeta: Default,
+{
+}
+
+impl<'a, TIncluded, TExcluded, TMeta> Iterator
+    for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+where
+    TIncluded: Copy + Into<u64>,
+    TExcluded: Copy + Into<u64>,
+    TMeta: Default,
+{
+    type Item = (RangeInclusive<u64>, TMeta);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut x = self.cell.borrow_mut();
+        let (col, read_pos) = &mut *x;
+        if *read_pos >= self.original_len {
+            return None;
+        }
+        let exclude = (*col.excluded.get(*read_pos)?).into();
+        self.offset += exclude;
+
+        let include = (*col.included.get(*read_pos)?).into();
+        let out_range =
+            RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
+        self.offset += include;
+
+        let meta = std::mem::take(&mut col.meta[*read_pos]);
+        *read_pos += 1;
+
+        Some((out_range, meta))
     }
 }
 
@@ -413,5 +589,54 @@ mod tests {
         ])
         .unwrap_err();
         assert!(error.contains("> 12"), "{error}");
+    }
+
+    #[test]
+    fn split_combine() {
+        let mut a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
+            (10u32..15, "a1".to_string()),
+            (30..35, "a2".to_string()),
+        ])
+        .unwrap();
+
+        let (a_iter, a_sink) = a.split();
+        a_sink.process(a_iter.map(|(x, m)| {
+            let (start, end) = x.into_inner();
+            ((start + 5)..=(end + 5), m)
+        }));
+
+        assert_eq!(
+            vec![(15u64..=19, "a1"), (35..=39, "a2")],
+            a.iter::<RangeInclusive<u64>>()
+                .map(|(r, m)| (r, m.as_str()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn split_when_collection_becomes_bigger() {
+        let mut a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
+            (10u32..15, "first".to_string()),
+            (30..35, "second".to_string()),
+        ])
+        .unwrap();
+
+        let (a_iter, a_sink) = a.split();
+        a_sink.process(a_iter.flat_map(|(x, m)| {
+            let with_offset = (*x.start() + 10)..=(*x.end() + 10);
+            [(x, m.clone()), (with_offset, format!("{}_offset", m))]
+        }));
+
+        assert_eq!(
+            vec![
+                (10u64..=14, "first"),
+                (20..=24, "first_offset"),
+                (30..=34, "second"),
+                (40..=44, "second_offset")
+            ],
+            a.iter::<RangeInclusive<u64>>()
+                .map(|(r, m)| (r, m.as_str()))
+                .collect::<Vec<_>>()
+        );
     }
 }

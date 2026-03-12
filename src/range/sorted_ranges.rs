@@ -33,6 +33,7 @@ impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
 }
 
 pub struct RangeSink<'a, TIter, TIncluded, TExcluded> {
+    original_len: usize,
     cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
     _phantom: PhantomData<TIter>,
 }
@@ -46,7 +47,7 @@ where
         let offsets_iter = RangeToOffsetsIter::<_, TIncluded, TExcluded>::new(items);
         let mut cache: VecDeque<(TExcluded, TIncluded)> = VecDeque::new();
         let mut write_pos = 0;
-        let original_len = self.cell.borrow().0.included.len();
+        let original_len = self.original_len;
 
         let write_tuple = |col: &mut SortedRanges<_, _>, (excl, incl), write_pos: &mut usize| {
             if *write_pos < col.included.len() {
@@ -59,13 +60,13 @@ where
             *write_pos += 1;
         };
 
-        for (excluded, included) in offsets_iter {
+        for tuple in offsets_iter {
             let mut x = self.cell.borrow_mut();
             let (read_pos, col) = (x.1, &mut x.0);
-            if write_pos < read_pos || read_pos >= original_len {
-                write_tuple(col, (excluded, included), &mut write_pos);
+            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
+                write_tuple(col, tuple, &mut write_pos);
             } else {
-                cache.push_back((excluded, included));
+                cache.push_back(tuple);
                 while (write_pos < read_pos || read_pos >= original_len)
                     && let Some(tuple) = cache.pop_front()
                 {
@@ -173,6 +174,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             },
             RangeSink {
                 cell,
+                original_len,
                 _phantom: PhantomData,
             },
         )
@@ -455,14 +457,17 @@ mod tests {
     #[test]
     fn iterate_with_different_output_types() {
         let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
-        
+
         let as_range: Vec<_> = encoded.iter::<Range<u64>>().collect();
         assert_eq!(vec![10u64..15, 30..35], as_range);
-        
+
         let as_range_inclusive: Vec<_> = encoded.iter::<RangeInclusive<u64>>().collect();
         assert_eq!(vec![10u64..=14, 30..=34], as_range_inclusive);
-        
+
         let as_nonzero_range: Vec<_> = encoded.iter::<NonZeroRange<u64>>().collect();
-        assert_eq!(vec![NonZeroRange::new(10u64..15), NonZeroRange::new(30..35)], as_nonzero_range);
+        assert_eq!(
+            vec![NonZeroRange::new(10u64..15), NonZeroRange::new(30..35)],
+            as_nonzero_range
+        );
     }
 }
