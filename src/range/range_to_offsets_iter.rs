@@ -28,6 +28,11 @@ where
         let range = self.iter.next()?;
         let (start, end) = range.into_inner();
         let len = end - start + 1;
+        debug_assert!(
+            start >= self.prev_end,
+            "Ranges must be sorted and non-overlapping: got start={start}, but prev_end={}",
+            self.prev_end
+        );
         let gap = start - self.prev_end;
         self.prev_end = start + len;
         let excluded = gap.try_into().unwrap_or_else(|_| {

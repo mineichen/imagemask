@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::VecDeque,
     fmt::{Debug, Display},
     iter::FusedIterator,
     marker::PhantomData,
@@ -43,22 +44,51 @@ where
 {
     pub fn process(self, items: T) {
         let offsets_iter = RangeToOffsetsIter::<_, TIncluded, TExcluded>::new(items);
-        for (i, (excluded, included)) in offsets_iter.enumerate() {
-            let mut x = self.cell.borrow_mut();
-            let (col, read_pos) = &mut *x;
-            if i < *read_pos {
-                col.excluded[i] = excluded;
-                col.included[i] = included;
+        let mut cache: VecDeque<(TExcluded, TIncluded)> = VecDeque::new();
+        let mut write_pos = 0;
+        let original_len = self.cell.borrow().0.included.len();
+
+        let write_tuple = |col: &mut SortedRanges<_, _>, (excl, incl), write_pos: &mut usize| {
+            if *write_pos < col.included.len() {
+                col.excluded[*write_pos] = excl;
+                col.included[*write_pos] = incl;
             } else {
-                todo!()
+                col.excluded.push(excl);
+                col.included.push(incl);
+            }
+            *write_pos += 1;
+        };
+
+        for (excluded, included) in offsets_iter {
+            let mut x = self.cell.borrow_mut();
+            let (read_pos, col) = (x.1, &mut x.0);
+            if write_pos < read_pos || read_pos >= original_len {
+                write_tuple(col, (excluded, included), &mut write_pos);
+            } else {
+                cache.push_back((excluded, included));
+                while (write_pos < read_pos || read_pos >= original_len)
+                    && let Some(tuple) = cache.pop_front()
+                {
+                    write_tuple(col, tuple, &mut write_pos)
+                }
             }
         }
+
+        let mut x = self.cell.borrow_mut();
+        let col = &mut x.0;
+        while let Some(tuple) = cache.pop_front() {
+            write_tuple(col, tuple, &mut write_pos);
+        }
+
+        col.included.truncate(write_pos);
+        col.excluded.truncate(write_pos);
     }
 }
 
 pub struct SourceIterator<'a, TIncluded, TExcluded> {
     cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
     offset: u64,
+    original_len: usize,
 }
 
 impl<'a, TIncluded, TExcluded> FusedIterator for SourceIterator<'a, TIncluded, TExcluded>
@@ -78,6 +108,9 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let mut x = self.cell.borrow_mut();
         let (col, read_pos) = &mut *x;
+        if *read_pos >= self.original_len {
+            return None;
+        }
         let exclude = (*col.excluded.get(*read_pos)?).into();
         self.offset += exclude;
 
@@ -130,11 +163,13 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         SourceIterator<'_, TIncluded, TExcluded>,
         RangeSink<'_, T, TIncluded, TExcluded>,
     ) {
+        let original_len = self.included.len();
         let cell = Rc::new(std::cell::RefCell::new((self, 0usize)));
         (
             SourceIterator {
                 cell: cell.clone(),
                 offset: 0,
+                original_len,
             },
             RangeSink {
                 cell,
@@ -337,6 +372,22 @@ mod tests {
 
         assert_eq!(vec![10u64..40, 41..45], a.iter_owned().collect::<Vec<_>>());
         assert_eq!(vec![20u64..30, 41..45], b.iter_owned().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn split_when_collection_becomes_bigger() {
+        let mut a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
+
+        let (a_iter, a_sink) = a.split();
+        a_sink.process(a_iter.flat_map(|x| {
+            let with_offset = (*x.start() + 10)..=(*x.end() + 10);
+            [x, with_offset]
+        }));
+
+        assert_eq!(
+            vec![10u64..15, 20..25, 30..35, 40..45],
+            a.iter_owned().collect::<Vec<_>>()
+        );
     }
 
     #[test]
