@@ -389,6 +389,15 @@ mod tests {
     }
 
     #[test]
+    fn ranges_starting_at_zero() {
+        let map = SortedRanges::<u32, u32>::try_from_ordered_iter([0u64..1, 5u64..6]);
+
+        let map = map.unwrap();
+        let collected: Vec<_> = map.iter::<std::ops::Range<u64>>().collect();
+        assert_eq!(vec![0u64..1, 5u64..6], collected);
+    }
+
+    #[test]
     fn split_when_collection_becomes_bigger() {
         let mut a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
 

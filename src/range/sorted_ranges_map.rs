@@ -62,16 +62,26 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             T::try_from(end - start).map_err(|e| e.to_string())
         }
 
-        let iter = iter.into_iter().map(|(range, meta)| {
+        let mut iter = iter.into_iter().map(|(range, meta)| {
             let start = range.start.into();
             let end = range.end.into();
             create_checked::<TIncluded>(start, end).map(|x| (start..end, x, meta))
         });
 
-        let mut cur_pos = 0;
-        let mut included = Vec::<TIncluded>::with_capacity(iter.size_hint().0);
-        let mut excluded = Vec::<TExcluded>::with_capacity(iter.size_hint().0);
-        let mut meta = Vec::<TMeta>::with_capacity(iter.size_hint().0);
+        let Some((first_range, first_len, first_meta)) = iter.next().transpose()? else {
+            return Err("Requires at least one item".into());
+        };
+        let initial_offset = TExcluded::try_from(first_range.start).map_err(|e| e.to_string())?;
+
+        let mut included = Vec::<TIncluded>::with_capacity(iter.size_hint().0 + 1);
+        let mut excluded = Vec::<TExcluded>::with_capacity(iter.size_hint().0 + 1);
+        let mut meta = Vec::<TMeta>::with_capacity(iter.size_hint().0 + 1);
+
+        included.push(first_len);
+        excluded.push(initial_offset);
+        meta.push(first_meta);
+
+        let mut cur_pos = first_range.end;
         for x in iter {
             let (next_range, next_len, next_meta) = x?;
             excluded.push(create_checked(cur_pos, next_range.start)?);
@@ -79,10 +89,6 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             meta.push(next_meta);
             cur_pos = next_range.end;
         }
-
-        if included.is_empty() {
-            return Err("Requires at least one item".into());
-        };
 
         Ok(Self {
             included,
@@ -476,6 +482,21 @@ mod tests {
     use std::{num::NonZero, ops::RangeInclusive};
 
     use super::*;
+
+    #[test]
+    fn ranges_starting_at_zero() {
+        let map = SortedRangesMap::<u32, u32, Vec<&str>>::try_from_ordered_iter([
+            (0u64..1, "first"),
+            (5u64..6, "second"),
+        ]);
+
+        // This should succeed, but currently fails with error "0 must be > 0"
+        assert!(map.is_ok());
+
+        let map = map.unwrap();
+        let collected: Vec<_> = map.iter::<std::ops::Range<u64>>().map(|x| x.0).collect();
+        assert_eq!(vec![0u64..1, 5u64..6], collected);
+    }
 
     #[cfg(feature = "range-set-blaze-0_5")]
     #[test]
