@@ -9,6 +9,8 @@ use std::{
     rc::Rc,
 };
 
+use num_traits::Zero;
+
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
@@ -96,7 +98,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             meta,
         })
     }
-    pub fn iter<T: CreateRange<Item: Default>>(
+    pub fn iter<T: CreateRange<Item: Zero>>(
         &self,
     ) -> SortedRangesMapIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
@@ -112,7 +114,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
             meta: self.meta.iter(),
-            offset: Default::default(),
+            offset: Zero::zero(),
             _out: PhantomData,
         }
     }
@@ -126,7 +128,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             .expect("Constructors make sure, there is always at least one Range")
     }
 
-    pub fn iter_owned<T: CreateRange<Item: Default>>(
+    pub fn iter_owned<T: CreateRange<Item: Zero>>(
         self,
     ) -> SortedRangesMapIter<
         std::vec::IntoIter<TIncluded>,
@@ -138,7 +140,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
             meta: self.meta.into_iter(),
-            offset: Default::default(),
+            offset: Zero::zero(),
             _out: PhantomData,
         }
     }
@@ -283,7 +285,7 @@ impl<'a, TIncluded, TExcluded, TMeta> FusedIterator
 where
     TIncluded: Copy + Into<u64>,
     TExcluded: Copy + Into<u64>,
-    TMeta: Default,
+    TMeta: Clone,
 {
 }
 
@@ -292,7 +294,7 @@ impl<'a, TIncluded, TExcluded, TMeta> Iterator
 where
     TIncluded: Copy + Into<u64>,
     TExcluded: Copy + Into<u64>,
-    TMeta: Default,
+    TMeta: Clone,
 {
     type Item = (RangeInclusive<u64>, TMeta);
 
@@ -310,7 +312,9 @@ where
             RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
         self.offset += include;
 
-        let meta = std::mem::take(&mut col.meta[*read_pos]);
+        // Todo: Unsafe MaybeInit code allows reuse of this...
+        // We should be able to reduce cloning to a minimum
+        let meta = col.meta[*read_pos].clone();
         *read_pos += 1;
 
         Some((out_range, meta))
@@ -475,6 +479,24 @@ mod range_set_blaze_0_5_interop {
             + std::ops::Add<Output = TRangeItem>,
     {
     }
+
+    impl<'a, TIncluded, TExcluded, TMeta> SortedStartsMap<u64, TMeta>
+        for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+    where
+        TIncluded: Copy + Into<u64>,
+        TExcluded: Copy + Into<u64>,
+        TMeta: ValueRef,
+    {
+    }
+
+    impl<'a, TIncluded, TExcluded, TMeta> SortedDisjointMap<u64, TMeta>
+        for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+    where
+        TIncluded: Copy + Into<u64>,
+        TExcluded: Copy + Into<u64>,
+        TMeta: ValueRef,
+    {
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +505,90 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "range-set-blaze-0_5")]
+    mod blaze {
+        use super::*;
+        use range_set_blaze_0_5::{SortedDisjointMap, ValueRef};
+        #[derive(PartialEq, Eq, Clone, Debug)]
+        struct MetaItem(&'static str);
+
+        impl From<&'static str> for MetaItem {
+            fn from(value: &'static str) -> Self {
+                Self(value)
+            }
+        }
+
+        impl ValueRef for MetaItem {
+            type Target = MetaItem;
+
+            fn into_value(self) -> Self::Target {
+                self
+            }
+        }
+        #[test]
+        fn combine_owned() {
+            //type MetaItem = String;
+            let a = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+                (10u32..30, "a_first".into()),
+                (42..50, "a_second".into()),
+            ])
+            .unwrap();
+            let b = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+                (20u32..30, "b_first".into()),
+                (41..45, "b_second".into()),
+            ])
+            .unwrap();
+
+            let a_iter = a.iter_owned::<RangeInclusive<u64>>();
+            let b_iter = b.iter_owned::<RangeInclusive<u64>>();
+            let result = b_iter
+                .union(a_iter)
+                .map(|(r, m)| (*r.start()..(*r.end() + 1), m))
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                vec![
+                    (10u64..30, MetaItem::from("a_first")),
+                    (41..42, MetaItem::from("b_second")),
+                    (42..50, MetaItem::from("a_second"))
+                ],
+                result
+            );
+        }
+        #[test]
+        fn combine_inline() {
+            use range_set_blaze_0_5::SortedDisjointMap;
+
+            let mut a = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+                (10u32..30, "a_first".into()),
+                (42..50, "a_second".into()),
+            ])
+            .unwrap();
+            let b = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+                (20u32..30, "b_first".into()),
+                (41..45, "b_second".into()),
+            ])
+            .unwrap();
+
+            let (a_iter, a_sink) = a.split();
+            let b_iter = b.iter_owned::<RangeInclusive<u64>>();
+            a_sink.process(
+                b_iter
+                    .union(a_iter)
+                    .map(|(r, m)| (*r.start()..=(*r.end()), m)),
+            );
+
+            assert_eq!(
+                vec![
+                    (10u64..30, MetaItem::from("a_first")),
+                    (41..42, MetaItem::from("b_second")),
+                    (42..50, MetaItem::from("a_second"))
+                ],
+                a.iter_owned::<Range<u64>>().collect::<Vec<_>>()
+            );
+        }
+    }
+
     #[test]
     fn ranges_starting_at_zero() {
         let map = SortedRangesMap::<u32, u32, Vec<&str>>::try_from_ordered_iter([
@@ -490,45 +596,9 @@ mod tests {
             (5u64..6, "second"),
         ]);
 
-        // This should succeed, but currently fails with error "0 must be > 0"
-        assert!(map.is_ok());
-
         let map = map.unwrap();
         let collected: Vec<_> = map.iter::<std::ops::Range<u64>>().map(|x| x.0).collect();
         assert_eq!(vec![0u64..1, 5u64..6], collected);
-    }
-
-    #[cfg(feature = "range-set-blaze-0_5")]
-    #[test]
-    fn combine_inline() {
-        use range_set_blaze_0_5::SortedDisjointMap;
-
-        let a = SortedRangesMap::<u8, u8, Vec<&'static str>>::try_from_ordered_iter([
-            (10u32..30, "a_first"),
-            (42..50, "a_second"),
-        ])
-        .unwrap();
-        let b = SortedRangesMap::<u8, u8, Vec<&'static str>>::try_from_ordered_iter([
-            (20u32..30, "b_first"),
-            (41..45, "b_second"),
-        ])
-        .unwrap();
-
-        let a_iter = a.iter::<RangeInclusive<u64>>();
-        let b_iter = b.iter::<RangeInclusive<u64>>();
-        let result = b_iter
-            .union(a_iter)
-            .map(|(r, m)| (*r.start()..(*r.end() + 1), *m))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            vec![
-                (10u64..30, "a_first"),
-                (41..42, "b_second"),
-                (42..50, "a_second")
-            ],
-            result
-        );
     }
 
     #[test]
