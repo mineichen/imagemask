@@ -9,6 +9,14 @@ range-set-blaze-0_5 = { package = "range-set-blaze", version = "0.5", default-fe
 thiserror = "2.0.12"
 rkyv = { version = "0.8.15", optional = true }
 num-traits = "0.2"
+futures-core = { version = "0.3", optional = true }
+futures-io = { version = "0.3", optional = true }
+pin-project-lite = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "io-util"] }
+futures-util = "0.3"
 
 [features]
-# default = ["range-set-blaze-0_5", "rkyv"]
+#default = ["range-set-blaze-0_5", "rkyv", "async-io"]
+async-io = ["futures-io", "futures-core", "pin-project-lite"]

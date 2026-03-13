@@ -4,6 +4,8 @@ use std::fmt::Debug;
 /// Working with ranges or collections/iterators of ranges
 ///
 mod assert_sorted_iter;
+#[cfg(feature = "async-io")]
+mod async_io;
 mod merge_ordered_iter;
 mod non_zero;
 mod range_to_offsets_iter;
@@ -11,6 +13,8 @@ mod sorted_ranges;
 mod sorted_ranges_map;
 
 pub use assert_sorted_iter::*;
+#[cfg(feature = "async-io")]
+pub use async_io::*;
 pub use merge_ordered_iter::*;
 pub use non_zero::*;
 pub use range_to_offsets_iter::*;
