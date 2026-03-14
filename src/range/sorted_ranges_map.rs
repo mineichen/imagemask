@@ -13,13 +13,6 @@ use num_traits::Zero;
 
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 
-/// Represents areas on images. It's designed to efficiently support various image sizes.
-/// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
-/// Included represents the number of pixels to include, excluded encodes the gap between two included ranges
-///
-/// Included.len() = excluded.len()
-///
-/// Meta is expected to be indexable for each included range
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
 pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
@@ -119,6 +112,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         }
     }
 
+    #[allow(clippy::len_without_is_empty, reason = "is_empty would always be true")]
     pub fn len(&self) -> usize {
         self.included.len()
     }
@@ -145,38 +139,76 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         }
     }
 
-    pub fn split<T: Iterator<Item = (RangeInclusive<u64>, TMeta)>>(
-        &mut self,
-    ) -> (
-        SourceIteratorMap<'_, TIncluded, TExcluded, TMeta>,
-        RangeSinkMap<'_, T, TIncluded, TExcluded, TMeta>,
-    ) {
+    pub fn map_inplace<TIter, TFun>(self, f: TFun) -> Option<Self>
+    where
+        TIter: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
+        TFun: FnOnce(SourceIteratorMap<TIncluded, TExcluded, TMeta>) -> TIter,
+        TIncluded: TryFrom<u64, Error: Debug> + Clone,
+        TExcluded: TryFrom<u64, Error: Debug> + Clone,
+        TMeta: Clone,
+    {
         let original_len = self.included.len();
         let cell = Rc::new(RefCell::new((self, 0usize)));
-        (
-            SourceIteratorMap {
-                cell: cell.clone(),
-                offset: 0,
-                original_len,
-            },
-            RangeSinkMap {
-                cell,
-                original_len,
-                _phantom: PhantomData,
-            },
-        )
-    }
-}
 
-pub struct RangeSinkMap<'a, TIter, TIncluded, TExcluded, TMeta> {
-    cell: Rc<
-        RefCell<(
-            &'a mut SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>,
-            usize,
-        )>,
-    >,
-    original_len: usize,
-    _phantom: PhantomData<TIter>,
+        let source = SourceIteratorMap {
+            cell: cell.clone(),
+            offset: 0,
+            original_len,
+        };
+
+        let items = f(source);
+        let offsets_iter = RangeToOffsetsIterMap::<_, TIncluded, TExcluded, TMeta>::new(items);
+        let mut cache: VecDeque<(TExcluded, TIncluded, TMeta)> = VecDeque::new();
+        let mut write_pos = 0;
+
+        let write_tuple =
+            |col: &mut SortedRangesMap<_, _, Vec<_>>, (excl, incl, meta), write_pos: &mut usize| {
+                if *write_pos < col.included.len() {
+                    col.excluded[*write_pos] = excl;
+                    col.included[*write_pos] = incl;
+                    col.meta[*write_pos] = meta;
+                } else {
+                    col.excluded.push(excl);
+                    col.included.push(incl);
+                    col.meta.push(meta);
+                }
+                *write_pos += 1;
+            };
+
+        for tuple in offsets_iter {
+            let mut x = cell.borrow_mut();
+            let (read_pos, col) = (x.1, &mut x.0);
+            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
+                write_tuple(col, tuple, &mut write_pos);
+            } else {
+                cache.push_back(tuple);
+                while (write_pos < read_pos || read_pos >= original_len)
+                    && let Some(t) = cache.pop_front()
+                {
+                    write_tuple(col, t, &mut write_pos)
+                }
+            }
+        }
+
+        let not_empty = {
+            let mut x = cell.borrow_mut();
+            let col = &mut x.0;
+            while let Some(tuple) = cache.pop_front() {
+                write_tuple(col, tuple, &mut write_pos);
+            }
+
+            col.included.truncate(write_pos);
+            col.excluded.truncate(write_pos);
+            col.meta.truncate(write_pos);
+            !x.0.included.is_empty()
+        };
+        not_empty.then(move || {
+            Rc::try_unwrap(cell)
+                .expect("You are not allowed to move SourceIter outside the lambda")
+                .into_inner()
+                .0
+        })
+    }
 }
 
 pub struct RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta> {
@@ -216,72 +248,18 @@ where
     }
 }
 
-impl<'a, T, TIncluded, TExcluded, TMeta> RangeSinkMap<'a, T, TIncluded, TExcluded, TMeta>
-where
-    T: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
-    TIncluded: TryFrom<u64, Error: Debug>,
-    TExcluded: TryFrom<u64, Error: Debug>,
-{
-    pub fn process(self, items: T) {
-        let offsets_iter = RangeToOffsetsIterMap::<_, TIncluded, TExcluded, TMeta>::new(items);
-        let mut cache: VecDeque<(TExcluded, TIncluded, TMeta)> = VecDeque::new();
-        let mut write_pos = 0;
-        let original_len = self.original_len;
-
-        let write_tuple =
-            |col: &mut SortedRangesMap<_, _, Vec<_>>, (excl, incl, meta), write_pos: &mut usize| {
-                if *write_pos < col.included.len() {
-                    col.excluded[*write_pos] = excl;
-                    col.included[*write_pos] = incl;
-                    col.meta[*write_pos] = meta;
-                } else {
-                    col.excluded.push(excl);
-                    col.included.push(incl);
-                    col.meta.push(meta);
-                }
-                *write_pos += 1;
-            };
-
-        for tuple in offsets_iter {
-            let mut x = self.cell.borrow_mut();
-            let (read_pos, col) = (x.1, &mut x.0);
-            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
-                write_tuple(col, tuple, &mut write_pos);
-            } else {
-                cache.push_back(tuple);
-                while (write_pos < read_pos || read_pos >= original_len)
-                    && let Some(t) = cache.pop_front()
-                {
-                    write_tuple(col, t, &mut write_pos)
-                }
-            }
-        }
-
-        let mut x = self.cell.borrow_mut();
-        let col = &mut x.0;
-        while let Some(tuple) = cache.pop_front() {
-            write_tuple(col, tuple, &mut write_pos);
-        }
-
-        col.included.truncate(write_pos);
-        col.excluded.truncate(write_pos);
-        col.meta.truncate(write_pos);
-    }
-}
-
-pub struct SourceIteratorMap<'a, TIncluded, TExcluded, TMeta> {
-    cell: Rc<
-        RefCell<(
-            &'a mut SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>,
-            usize,
-        )>,
-    >,
+pub struct SourceIteratorMap<TIncluded, TExcluded, TMeta> {
+    cell: Rc<RefCell<(SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>, usize)>>,
     offset: u64,
     original_len: usize,
 }
 
-impl<'a, TIncluded, TExcluded, TMeta> FusedIterator
-    for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+unsafe impl<TIncluded: Send, TExcluded: Send, TMeta: Send> Send
+    for SourceIteratorMap<TIncluded, TExcluded, TMeta>
+{
+}
+
+impl<TIncluded, TExcluded, TMeta> FusedIterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
 where
     TIncluded: Copy + Into<u64>,
     TExcluded: Copy + Into<u64>,
@@ -289,8 +267,7 @@ where
 {
 }
 
-impl<'a, TIncluded, TExcluded, TMeta> Iterator
-    for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+impl<TIncluded, TExcluded, TMeta> Iterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
 where
     TIncluded: Copy + Into<u64>,
     TExcluded: Copy + Into<u64>,
@@ -312,8 +289,6 @@ where
             RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
         self.offset += include;
 
-        // Todo: Unsafe MaybeInit code allows reuse of this...
-        // We should be able to reduce cloning to a minimum
         let meta = col.meta[*read_pos].clone();
         *read_pos += 1;
 
@@ -480,8 +455,8 @@ mod range_set_blaze_0_5_interop {
     {
     }
 
-    impl<'a, TIncluded, TExcluded, TMeta> SortedStartsMap<u64, TMeta>
-        for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+    impl<TIncluded, TExcluded, TMeta> SortedStartsMap<u64, TMeta>
+        for SourceIteratorMap<TIncluded, TExcluded, TMeta>
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
@@ -489,8 +464,8 @@ mod range_set_blaze_0_5_interop {
     {
     }
 
-    impl<'a, TIncluded, TExcluded, TMeta> SortedDisjointMap<u64, TMeta>
-        for SourceIteratorMap<'a, TIncluded, TExcluded, TMeta>
+    impl<TIncluded, TExcluded, TMeta> SortedDisjointMap<u64, TMeta>
+        for SourceIteratorMap<TIncluded, TExcluded, TMeta>
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
@@ -559,7 +534,7 @@ mod tests {
         fn combine_inline() {
             use range_set_blaze_0_5::SortedDisjointMap;
 
-            let mut a = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+            let a = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
                 (10u32..30, "a_first".into()),
                 (42..50, "a_second".into()),
             ])
@@ -570,13 +545,14 @@ mod tests {
             ])
             .unwrap();
 
-            let (a_iter, a_sink) = a.split();
             let b_iter = b.iter_owned::<RangeInclusive<u64>>();
-            a_sink.process(
-                b_iter
-                    .union(a_iter)
-                    .map(|(r, m)| (*r.start()..=(*r.end()), m)),
-            );
+            let a = a
+                .map_inplace(|a_iter| {
+                    b_iter
+                        .union(a_iter)
+                        .map(|(r, m)| (*r.start()..=(*r.end()), m))
+                })
+                .unwrap();
 
             assert_eq!(
                 vec![
@@ -684,17 +660,20 @@ mod tests {
 
     #[test]
     fn split_combine() {
-        let mut a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
+        let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
             (10u32..15, "a1".to_string()),
             (30..35, "a2".to_string()),
         ])
         .unwrap();
 
-        let (a_iter, a_sink) = a.split();
-        a_sink.process(a_iter.map(|(x, m)| {
-            let (start, end) = x.into_inner();
-            ((start + 5)..=(end + 5), m)
-        }));
+        let a = a
+            .map_inplace(|iter| {
+                iter.map(|(x, m)| {
+                    let (start, end) = x.into_inner();
+                    ((start + 5)..=(end + 5), m)
+                })
+            })
+            .unwrap();
 
         assert_eq!(
             vec![(15u64..=19, "a1"), (35..=39, "a2")],
@@ -706,17 +685,20 @@ mod tests {
 
     #[test]
     fn split_when_collection_becomes_bigger() {
-        let mut a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
+        let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
             (10u32..15, "first".to_string()),
             (30..35, "second".to_string()),
         ])
         .unwrap();
 
-        let (a_iter, a_sink) = a.split();
-        a_sink.process(a_iter.flat_map(|(x, m)| {
-            let with_offset = (*x.start() + 10)..=(*x.end() + 10);
-            [(x, m.clone()), (with_offset, format!("{}_offset", m))]
-        }));
+        let a = a
+            .map_inplace(|iter| {
+                iter.flat_map(|(x, m)| {
+                    let with_offset = (*x.start() + 10)..=(*x.end() + 10);
+                    [(x, m.clone()), (with_offset, format!("{}_offset", m))]
+                })
+            })
+            .unwrap();
 
         assert_eq!(
             vec![
@@ -729,5 +711,18 @@ mod tests {
                 .map(|(r, m)| (r, m.as_str()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn split_returns_none_when_empty() {
+        let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([(
+            10u32..15,
+            "test".to_string(),
+        )])
+        .unwrap();
+
+        let result = a.map_inplace(|_| std::iter::empty());
+
+        assert!(result.is_none());
     }
 }

@@ -32,74 +32,20 @@ impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
     }
 }
 
-pub struct RangeSink<'a, TIter, TIncluded, TExcluded> {
-    original_len: usize,
-    cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
-    _phantom: PhantomData<TIter>,
-}
-impl<'a, T, TIncluded, TExcluded> RangeSink<'a, T, TIncluded, TExcluded>
-where
-    T: Iterator<Item = RangeInclusive<u64>>,
-    TIncluded: TryFrom<u64, Error: Debug>,
-    TExcluded: TryFrom<u64, Error: Debug>,
-{
-    pub fn process(self, items: T) {
-        let offsets_iter = RangeToOffsetsIter::<_, TIncluded, TExcluded>::new(items);
-        let mut cache: VecDeque<(TExcluded, TIncluded)> = VecDeque::new();
-        let mut write_pos = 0;
-        let original_len = self.original_len;
-
-        let write_tuple = |col: &mut SortedRanges<_, _>, (excl, incl), write_pos: &mut usize| {
-            if *write_pos < col.included.len() {
-                col.excluded[*write_pos] = excl;
-                col.included[*write_pos] = incl;
-            } else {
-                col.excluded.push(excl);
-                col.included.push(incl);
-            }
-            *write_pos += 1;
-        };
-
-        for tuple in offsets_iter {
-            let mut x = self.cell.borrow_mut();
-            let (read_pos, col) = (x.1, &mut x.0);
-            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
-                write_tuple(col, tuple, &mut write_pos);
-            } else {
-                cache.push_back(tuple);
-                while (write_pos < read_pos || read_pos >= original_len)
-                    && let Some(tuple) = cache.pop_front()
-                {
-                    write_tuple(col, tuple, &mut write_pos)
-                }
-            }
-        }
-
-        let mut x = self.cell.borrow_mut();
-        let col = &mut x.0;
-        while let Some(tuple) = cache.pop_front() {
-            write_tuple(col, tuple, &mut write_pos);
-        }
-
-        col.included.truncate(write_pos);
-        col.excluded.truncate(write_pos);
-    }
-}
-
-pub struct SourceIterator<'a, TIncluded, TExcluded> {
-    cell: Rc<RefCell<(&'a mut SortedRanges<TIncluded, TExcluded>, usize)>>,
+pub struct SourceIterator<TIncluded, TExcluded> {
+    cell: Rc<RefCell<(SortedRanges<TIncluded, TExcluded>, usize)>>,
     offset: u64,
     original_len: usize,
 }
 
-impl<'a, TIncluded, TExcluded> FusedIterator for SourceIterator<'a, TIncluded, TExcluded>
+impl<TIncluded, TExcluded> FusedIterator for SourceIterator<TIncluded, TExcluded>
 where
     TIncluded: Copy + Into<u64>,
     TExcluded: Copy + Into<u64>,
 {
 }
 
-impl<'a, TIncluded, TExcluded> Iterator for SourceIterator<'a, TIncluded, TExcluded>
+impl<TIncluded, TExcluded> Iterator for SourceIterator<TIncluded, TExcluded>
 where
     TIncluded: Copy + Into<u64>,
     TExcluded: Copy + Into<u64>,
@@ -137,20 +83,21 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
 
-    /// Split the collection into a Iterator<Item=RangeInclusive<u64>> and a RangeSink, which accepts a Iterator<Item=RangeInclusive<u64>>
-    /// This allows in_place operations without allocating memory, if the self contained equal or more items than the one to be collected
-    /// If more items are yielded than consumed, a intermediate cache is used
+    /// Transform the ranges in-place using a closure.
+    /// The closure receives a SourceIterator and returns an iterator of RangeInclusive<u64>.
+    /// Returns Some(SortedRanges) if non-empty, None if empty.
     /// ```
     /// use std::ops::RangeInclusive;
     /// use imagemask::SortedRanges;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60])?;
-    /// let (iter, sink) = ranges.split();
-    /// sink.process(iter.map(|x| {
-    ///     let (start, end) = x.into_inner();
-    ///     (start+5)..=(end + 5)
-    /// }));
+    /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60])?;
+    /// let ranges = ranges.map_inplace(|iter| {
+    ///     iter.map(|x| {
+    ///         let (start, end) = x.into_inner();
+    ///         (start+5)..=(end + 5)
+    ///     })
+    /// }).expect("Should not be empty");
     /// assert_eq!(
     ///     vec!(15u64..25, 35..50, 55..65),
     ///     ranges.iter_owned::<std::ops::Range<u64>>().collect::<Vec<_>>()
@@ -158,26 +105,70 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn split<T: Iterator<Item = RangeInclusive<u64>>>(
-        &mut self,
-    ) -> (
-        SourceIterator<'_, TIncluded, TExcluded>,
-        RangeSink<'_, T, TIncluded, TExcluded>,
-    ) {
+    pub fn map_inplace<TIter, TFun>(self, f: TFun) -> Option<Self>
+    where
+        TIter: Iterator<Item = RangeInclusive<u64>>,
+        TFun: FnOnce(SourceIterator<TIncluded, TExcluded>) -> TIter,
+        TIncluded: TryFrom<u64, Error: Debug> + Clone,
+        TExcluded: TryFrom<u64, Error: Debug> + Clone,
+    {
         let original_len = self.included.len();
-        let cell = Rc::new(std::cell::RefCell::new((self, 0usize)));
-        (
-            SourceIterator {
-                cell: cell.clone(),
-                offset: 0,
-                original_len,
-            },
-            RangeSink {
-                cell,
-                original_len,
-                _phantom: PhantomData,
-            },
-        )
+        // Rc is required, because we cannot restrict TIter by the Lifetime of the FnOnce-argument
+        // When working with pointers, it was difficult to forbid the Lambda use to std::mem::swap...
+        // If this happens, `map_inplace` panics
+        let cell = Rc::new(RefCell::new((self, 0usize)));
+
+        let source = SourceIterator {
+            cell: cell.clone(),
+            offset: 0,
+            original_len,
+        };
+
+        let items = f(source);
+        let offsets_iter = RangeToOffsetsIter::<_, TIncluded, TExcluded>::new(items);
+        let mut cache: VecDeque<(TExcluded, TIncluded)> = VecDeque::new();
+        let mut write_pos = 0;
+
+        let write_tuple = |col: &mut SortedRanges<_, _>, (excl, incl), write_pos: &mut usize| {
+            if *write_pos < col.included.len() {
+                col.excluded[*write_pos] = excl;
+                col.included[*write_pos] = incl;
+            } else {
+                col.excluded.push(excl);
+                col.included.push(incl);
+            }
+            *write_pos += 1;
+        };
+
+        for tuple in offsets_iter {
+            let mut x = cell.borrow_mut();
+            let (read_pos, col) = (x.1, &mut x.0);
+            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
+                write_tuple(col, tuple, &mut write_pos);
+            } else {
+                cache.push_back(tuple);
+                while (write_pos < read_pos || read_pos >= original_len)
+                    && let Some(tuple) = cache.pop_front()
+                {
+                    write_tuple(col, tuple, &mut write_pos)
+                }
+            }
+        }
+        let not_empty = {
+            let mut x = cell.borrow_mut();
+            let col = &mut x.0;
+            while let Some(tuple) = cache.pop_front() {
+                write_tuple(col, tuple, &mut write_pos);
+            }
+
+            col.included.truncate(write_pos);
+            col.excluded.truncate(write_pos);
+            !x.0.included.is_empty()
+        };
+
+        not_empty.then(move|| {
+            Rc::try_unwrap(cell).expect("You mustn't move the SourceIterator outside the lambda provided to map_inplace").into_inner().0
+        })
     }
 
     pub fn try_from_ordered_iter<TRange>(
@@ -338,14 +329,14 @@ mod range_set_blaze_0_5_interop {
     use range_set_blaze_0_5::{SortedDisjoint, SortedStarts};
 
     use super::*;
-    impl<'a, TIncluded, TExcluded> SortedStarts<u64> for SourceIterator<'a, TIncluded, TExcluded>
+    impl<TIncluded, TExcluded> SortedStarts<u64> for SourceIterator<TIncluded, TExcluded>
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
     {
     }
 
-    impl<'a, TIncluded, TExcluded> SortedDisjoint<u64> for SourceIterator<'a, TIncluded, TExcluded>
+    impl<TIncluded, TExcluded> SortedDisjoint<u64> for SourceIterator<TIncluded, TExcluded>
     where
         TIncluded: Copy + Into<u64>,
         TExcluded: Copy + Into<u64>,
@@ -377,12 +368,11 @@ mod tests {
     fn combine_inline() {
         use range_set_blaze_0_5::SortedDisjoint;
 
-        let mut a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 30..40]).unwrap();
+        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 30..40]).unwrap();
         let b = SortedRanges::<u8, u8>::try_from_ordered_iter([20u32..30, 41..45]).unwrap();
 
-        let (a_iter, a_sink) = a.split();
         let b_iter = b.iter::<RangeInclusive<u64>>();
-        a_sink.process(b_iter.union(a_iter));
+        let a = a.map_inplace(|a_iter| b_iter.union(a_iter)).unwrap();
 
         assert_eq!(vec![10u64..40, 41..45], a.iter_owned().collect::<Vec<_>>());
         assert_eq!(vec![20u64..30, 41..45], b.iter_owned().collect::<Vec<_>>());
@@ -399,18 +389,30 @@ mod tests {
 
     #[test]
     fn split_when_collection_becomes_bigger() {
-        let mut a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
+        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
 
-        let (a_iter, a_sink) = a.split();
-        a_sink.process(a_iter.flat_map(|x| {
-            let with_offset = (*x.start() + 10)..=(*x.end() + 10);
-            [x, with_offset]
-        }));
+        let a = a
+            .map_inplace(|iter| {
+                iter.flat_map(|x| {
+                    let with_offset = (*x.start() + 10)..=(*x.end() + 10);
+                    [x, with_offset]
+                })
+            })
+            .unwrap();
 
         assert_eq!(
             vec![10u64..15, 20..25, 30..35, 40..45],
             a.iter_owned().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn split_returns_none_when_empty() {
+        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15]).unwrap();
+
+        let result = a.map_inplace(|_| std::iter::empty());
+
+        assert!(result.is_none());
     }
 
     #[test]
