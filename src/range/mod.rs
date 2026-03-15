@@ -51,6 +51,7 @@ impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<Output = T>> 
     type Item = T;
     type ListItem<TMeta> = (Self, TMeta);
 
+    #[inline]
     fn new_debug_checked(
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
@@ -64,6 +65,7 @@ impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
     type Item = T;
     type ListItem<TMeta> = (Self, TMeta);
 
+    #[inline]
     fn new_debug_checked(
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
@@ -77,6 +79,7 @@ impl<T: SignedNonZeroable + Copy + PartialEq> CreateRange for NonZeroRange<T> {
     type Item = T;
     type ListItem<TMeta> = MetaRange<Self, TMeta>;
 
+    #[inline]
     fn new_debug_checked(
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,

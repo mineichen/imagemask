@@ -514,8 +514,8 @@ mod tests {
             ])
             .unwrap();
 
-            let a_iter = a.iter_owned::<RangeInclusive<u64>>();
-            let b_iter = b.iter_owned::<RangeInclusive<u64>>();
+            let a_iter = a.iter_owned::<RangeInclusive<usize>>();
+            let b_iter = b.iter_owned::<RangeInclusive<usize>>();
             let result = b_iter
                 .union(a_iter)
                 .map(|(r, m)| (*r.start()..(*r.end() + 1), m))
@@ -523,7 +523,7 @@ mod tests {
 
             assert_eq!(
                 vec![
-                    (10u64..30, MetaItem::from("a_first")),
+                    (10usize..30, MetaItem::from("a_first")),
                     (41..42, MetaItem::from("b_second")),
                     (42..50, MetaItem::from("a_second"))
                 ],

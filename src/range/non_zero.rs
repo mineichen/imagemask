@@ -180,6 +180,7 @@ impl<T: num_traits::One + std::ops::Sub<Output = T> + std::ops::Add<Output = T>>
 }
 
 impl<T> NonZeroRange<T> {
+    #[inline]
     pub fn from_span(start: T, len: T::NonZero) -> Self
     where
         T: Copy + SignedNonZeroable,
