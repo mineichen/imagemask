@@ -5,6 +5,7 @@ pub trait UncheckedCast<T>: Copy {
 macro_rules! impl_debug_checked_cast {
     ($src:ty, $dst:ty) => {
         impl UncheckedCast<$dst> for $src {
+            #[inline]
             fn cast_unchecked(self) -> $dst {
                 if core::mem::size_of::<$src>() > core::mem::size_of::<$dst>() {
                     debug_assert!(
