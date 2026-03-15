@@ -13,6 +13,13 @@ use num_traits::Zero;
 
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
 
+/// Represents areas on images. It's designed to efficiently support various image sizes.
+/// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
+/// Included represents the number of pixels to include, excluded encodes the gap between two included ranges
+///
+/// Included.len() = excluded.len()
+///
+/// Meta is expected to be indexable for each included range
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
 pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
@@ -289,6 +296,8 @@ where
             RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
         self.offset += include;
 
+        // Todo: Unsafe MaybeInit code allows reuse of this...
+        // We should be able to reduce cloning to a minimum
         let meta = col.meta[*read_pos].clone();
         *read_pos += 1;
 

@@ -38,7 +38,7 @@ impl<T> From<NonZeroRange<T>> for std::ops::Range<T> {
     }
 }
 impl<T: PartialOrd> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
-    type Error = RangeZeroLenghtError<T>;
+    type Error = RangeZeroLenghtError<std::ops::Range<T>>;
 
     fn try_from(value: std::ops::Range<T>) -> Result<Self, Self::Error> {
         if value.is_empty() {
@@ -48,6 +48,29 @@ impl<T: PartialOrd> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
                 start: value.start,
                 end: value.end,
             }))
+        }
+    }
+}
+
+impl<T: std::ops::Sub<Output = T> + num_traits::One> From<NonZeroRange<T>>
+    for std::ops::RangeInclusive<T>
+{
+    fn from(value: NonZeroRange<T>) -> Self {
+        value.0.start..=value.0.end - T::one()
+    }
+}
+impl<T: PartialOrd + std::ops::Add<Output = T> + num_traits::One>
+    TryFrom<std::ops::RangeInclusive<T>> for NonZeroRange<T>
+{
+    type Error = RangeZeroLenghtError<RangeInclusive<T>>;
+
+    fn try_from(value: std::ops::RangeInclusive<T>) -> Result<Self, Self::Error> {
+        if value.is_empty() {
+            Err(RangeZeroLenghtError(value))
+        } else {
+            let (start, end) = value.into_inner();
+            let end = end + T::one();
+            Ok(NonZeroRange(RangeUnchecked { start, end }))
         }
     }
 }
@@ -241,7 +264,7 @@ impl<T> Deref for NonZeroRange<T> {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0:?} is empty")]
-pub struct RangeZeroLenghtError<T>(std::ops::Range<T>);
+pub struct RangeZeroLenghtError<T>(T);
 
 #[cfg(test)]
 mod tests {
