@@ -11,6 +11,7 @@ mod non_zero;
 mod range_to_offsets_iter;
 mod sorted_ranges;
 mod sorted_ranges_map;
+mod unchecked_cast;
 
 pub use assert_sorted_iter::*;
 #[cfg(feature = "async-io")]
@@ -20,6 +21,7 @@ pub use non_zero::*;
 pub use range_to_offsets_iter::*;
 pub use sorted_ranges::*;
 pub use sorted_ranges_map::*;
+pub use unchecked_cast::*;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct OrderedRangeItem<TMeta> {

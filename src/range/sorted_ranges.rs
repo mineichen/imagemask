@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{CreateRange, NonZeroRange, RangeToOffsetsIter, SignedNonZeroable};
+use crate::{CreateRange, NonZeroRange, RangeToOffsetsIter, SignedNonZeroable, UncheckedCast};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -40,15 +40,15 @@ pub struct SourceIterator<TIncluded, TExcluded> {
 
 impl<TIncluded, TExcluded> FusedIterator for SourceIterator<TIncluded, TExcluded>
 where
-    TIncluded: Copy + Into<u64>,
-    TExcluded: Copy + Into<u64>,
+    TIncluded: UncheckedCast<u64>,
+    TExcluded: UncheckedCast<u64>,
 {
 }
 
 impl<TIncluded, TExcluded> Iterator for SourceIterator<TIncluded, TExcluded>
 where
-    TIncluded: Copy + Into<u64>,
-    TExcluded: Copy + Into<u64>,
+    TIncluded: UncheckedCast<u64>,
+    TExcluded: UncheckedCast<u64>,
 {
     type Item = RangeInclusive<u64>;
 
@@ -58,10 +58,10 @@ where
         if *read_pos >= self.original_len {
             return None;
         }
-        let exclude = (*col.excluded.get(*read_pos)?).into();
+        let exclude = (*col.excluded.get(*read_pos)?).cast_unchecked();
         self.offset += exclude;
 
-        let include = (*col.included.get(*read_pos)?).into();
+        let include = (*col.included.get(*read_pos)?).cast_unchecked();
         let out_range =
             RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
         self.offset += include;
@@ -74,12 +74,13 @@ where
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     pub fn new<TRange>(r: NonZeroRange<TRange>) -> Self
     where
-        TRange: Into<TIncluded> + Into<TExcluded> + Copy + std::ops::Sub<Output = TRange>,
+        TRange:
+            UncheckedCast<TIncluded> + UncheckedCast<TExcluded> + std::ops::Sub<Output = TRange>,
         TIncluded: TryFrom<u64>,
     {
         Self {
-            included: vec![r.len().into()],
-            excluded: vec![r.start.into()],
+            included: vec![r.len().cast_unchecked()],
+            excluded: vec![r.start.cast_unchecked()],
         }
     }
 
@@ -223,7 +224,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             .expect("Constructors make sure, there is always at least one Range")
     }
 
-    pub fn iter<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
+    pub fn iter<T: CreateRange>(
         &self,
     ) -> SortedRangesIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
@@ -231,33 +232,35 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         T,
     >
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + std::ops::Add<Output = T::Item>,
     {
         SortedRangesIter {
             include: self.included.iter().copied(),
             excluded: self.excluded.iter().copied(),
-            offset: T::Item::try_from(0u64).unwrap(),
+            offset: T::Item::default(),
             _out: PhantomData,
         }
     }
-    pub fn iter_owned<T: CreateRange<Item: TryFrom<u64, Error: Debug>>>(
+    pub fn iter_owned<T: CreateRange>(
         self,
     ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + std::ops::Add<Output = T::Item>,
     {
         SortedRangesIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
-            offset: T::Item::try_from(0u64).unwrap(),
+            offset: T::Item::default(),
             _out: PhantomData,
         }
     }
 }
 
-impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>> IntoIterator
+impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>> IntoIterator
     for SortedRanges<TIncluded, TExcluded>
 {
     type Item = NonZeroRange<u64>;
@@ -286,25 +289,18 @@ pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut: CreateRange> {
 
 impl<TIncluded, TExcluded, TOut> Iterator for SortedRangesIter<TIncluded, TExcluded, TOut>
 where
-    TIncluded: Iterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
-    TExcluded: Iterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
-    TOut: CreateRange,
-    TOut::Item: TryFrom<TIncluded::Item, Error: Debug>
-        + TryFrom<TExcluded::Item, Error: Debug>
-        + SignedNonZeroable
-        + Copy
-        + std::ops::Add<Output = TOut::Item>,
+    TIncluded: Iterator<Item: UncheckedCast<TOut::Item>>,
+    TExcluded: Iterator<Item: UncheckedCast<TOut::Item>>,
+    TOut: CreateRange<Item: Copy + SignedNonZeroable + std::ops::Add<Output = TOut::Item>>,
 {
     type Item = TOut;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let exclude = self.excluded.next()?.try_into().unwrap();
+        let exclude = self.excluded.next()?.cast_unchecked();
         self.offset = self.offset + exclude;
 
-        let include = self.include.next()?.try_into().unwrap();
-        let offset_item = TOut::Item::try_from(self.offset).expect("Cast shouldn't overflow");
-        let len_item = TOut::Item::try_from(include).expect("Cast include shouldn't overflow");
-        let out_range = TOut::new_debug_checked(offset_item, len_item.create_non_zero().unwrap());
+        let include = self.include.next()?.cast_unchecked();
+        let out_range = TOut::new_debug_checked(self.offset, include.create_non_zero().unwrap());
         self.offset = self.offset + include;
 
         Some(out_range)
@@ -313,48 +309,54 @@ where
 
 impl<TIncluded, TExcluded, TOut> FusedIterator for SortedRangesIter<TIncluded, TExcluded, TOut>
 where
-    TIncluded: FusedIterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
-    TExcluded: Iterator<Item: Copy + TryInto<TOut::Item, Error: Debug>>,
-    TOut: CreateRange,
-    TOut::Item: TryFrom<TIncluded::Item, Error: Debug>
-        + TryFrom<TExcluded::Item, Error: Debug>
-        + SignedNonZeroable
-        + Copy
-        + std::ops::Add<Output = TOut::Item>,
+    TIncluded: Iterator<Item: UncheckedCast<TOut::Item>>,
+    TExcluded: Iterator<Item: UncheckedCast<TOut::Item>>,
+    TOut: CreateRange<Item: Copy + SignedNonZeroable + std::ops::Add<Output = TOut::Item>>,
 {
 }
 
 #[cfg(feature = "range-set-blaze-0_5")]
 mod range_set_blaze_0_5_interop {
-    use range_set_blaze_0_5::{SortedDisjoint, SortedStarts};
+    use range_set_blaze_0_5::{Integer, SortedDisjoint, SortedStarts};
 
     use super::*;
     impl<TIncluded, TExcluded> SortedStarts<u64> for SourceIterator<TIncluded, TExcluded>
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<u64>,
+        TExcluded: UncheckedCast<u64>,
     {
     }
 
     impl<TIncluded, TExcluded> SortedDisjoint<u64> for SourceIterator<TIncluded, TExcluded>
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<u64>,
+        TExcluded: UncheckedCast<u64>,
     {
     }
-    impl<TIncluded, TExcluded> SortedStarts<u64>
-        for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
+    impl<TIncluded, TExcluded, T> SortedStarts<T>
+        for SortedRangesIter<TIncluded, TExcluded, RangeInclusive<T>>
     where
-        TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-        TExcluded: Iterator<Item: Copy + Into<u64>>,
+        TIncluded: FusedIterator<Item: UncheckedCast<T>>,
+        TExcluded: Iterator<Item: UncheckedCast<T>>,
+        T: Copy
+            + SignedNonZeroable
+            + std::ops::Add<Output = T>
+            + std::ops::Sub<Output = T>
+            + num_traits::One
+            + Integer,
     {
     }
-
-    impl<TIncluded, TExcluded> SortedDisjoint<u64>
-        for SortedRangesIter<TIncluded, TExcluded, std::ops::RangeInclusive<u64>>
+    impl<TIncluded, TExcluded, T> SortedDisjoint<T>
+        for SortedRangesIter<TIncluded, TExcluded, RangeInclusive<T>>
     where
-        TIncluded: FusedIterator<Item: Copy + Into<u64>>,
-        TExcluded: Iterator<Item: Copy + Into<u64>>,
+        TIncluded: FusedIterator<Item: UncheckedCast<T>>,
+        TExcluded: Iterator<Item: UncheckedCast<T>>,
+        T: Copy
+            + SignedNonZeroable
+            + std::ops::Add<Output = T>
+            + std::ops::Sub<Output = T>
+            + num_traits::One
+            + Integer,
     {
     }
 }

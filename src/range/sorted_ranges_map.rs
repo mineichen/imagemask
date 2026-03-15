@@ -11,7 +11,7 @@ use std::{
 
 use num_traits::Zero;
 
-use crate::{CreateRange, NonZeroRange, SignedNonZeroable};
+use crate::{CreateRange, NonZeroRange, SignedNonZeroable, UncheckedCast};
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -38,11 +38,12 @@ impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded
 impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>> {
     pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta) -> Self
     where
-        TRange: Into<TIncluded> + Into<TExcluded> + Copy + std::ops::Sub<Output = TRange>,
+        TRange:
+            UncheckedCast<TIncluded> + UncheckedCast<TExcluded> + std::ops::Sub<Output = TRange>,
     {
         Self {
-            included: vec![r.len().into()],
-            excluded: vec![r.start.into()],
+            included: vec![r.len().cast_unchecked()],
+            excluded: vec![r.start.cast_unchecked()],
             meta: vec![meta],
         }
     }
@@ -107,8 +108,8 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         T,
     >
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
     {
         SortedRangesMapIter {
             include: self.included.iter().copied(),
@@ -136,7 +137,11 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         std::vec::IntoIter<TExcluded>,
         std::vec::IntoIter<TMeta>,
         T,
-    > {
+    >
+    where
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+    {
         SortedRangesMapIter {
             include: self.included.into_iter(),
             excluded: self.excluded.into_iter(),
@@ -268,16 +273,16 @@ unsafe impl<TIncluded: Send, TExcluded: Send, TMeta: Send> Send
 
 impl<TIncluded, TExcluded, TMeta> FusedIterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
 where
-    TIncluded: Copy + Into<u64>,
-    TExcluded: Copy + Into<u64>,
+    TIncluded: UncheckedCast<u64>,
+    TExcluded: UncheckedCast<u64>,
     TMeta: Clone,
 {
 }
 
 impl<TIncluded, TExcluded, TMeta> Iterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
 where
-    TIncluded: Copy + Into<u64>,
-    TExcluded: Copy + Into<u64>,
+    TIncluded: UncheckedCast<u64>,
+    TExcluded: UncheckedCast<u64>,
     TMeta: Clone,
 {
     type Item = (RangeInclusive<u64>, TMeta);
@@ -288,10 +293,10 @@ where
         if *read_pos >= self.original_len {
             return None;
         }
-        let exclude = (*col.excluded.get(*read_pos)?).into();
+        let exclude = (*col.excluded.get(*read_pos)?).cast_unchecked();
         self.offset += exclude;
 
-        let include = (*col.included.get(*read_pos)?).into();
+        let include = (*col.included.get(*read_pos)?).cast_unchecked();
         let out_range =
             RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
         self.offset += include;
@@ -305,7 +310,7 @@ where
     }
 }
 
-impl<TIncluded: Copy + Into<u64>, TExcluded: Copy + Into<u64>, TMeta> IntoIterator
+impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>, TMeta> IntoIterator
     for SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>
 {
     type Item = MetaRange<NonZeroRange<u64>, TMeta>;
@@ -375,35 +380,29 @@ pub struct SortedRangesMapIter<
 }
 
 impl<
-    TIncluded: Iterator<Item: Copy + TryInto<TRange::Item, Error: Debug>>,
-    TExcluded: Iterator<Item: Copy + TryInto<TRange::Item, Error: Debug>>,
+    TIncluded: Iterator<Item: UncheckedCast<TRange::Item>>,
+    TExcluded: Iterator<Item: UncheckedCast<TRange::Item>>,
     TMeta: Iterator,
     TRange: CreateRange,
 > Iterator for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
 where
-    TRange::Item: TryFrom<TIncluded::Item, Error: Debug>
-        + TryFrom<TExcluded::Item, Error: Debug>
-        + SignedNonZeroable
-        + Copy
-        + std::ops::Add<Output = TRange::Item>,
+    TRange::Item: SignedNonZeroable + Copy + std::ops::Add<Output = TRange::Item>,
 {
     type Item = TRange::ListItem<TMeta::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let exclude = self.excluded.next()?.try_into().unwrap();
+        let exclude = self.excluded.next()?.cast_unchecked();
         self.offset = self.offset + exclude;
 
         let Some(include) = self.include.next() else {
             unreachable!("There must be more include");
         };
-        let include = include.try_into().unwrap();
+        let include = include.cast_unchecked();
         let Some(meta) = self.meta.next() else {
             unreachable!("There must be more metadata");
         };
 
-        let offset_item = TRange::Item::try_from(self.offset).expect("Cast shouldn't overflow");
-        let len_item = TRange::Item::try_from(include).expect("Cast include shouldn't overflow");
-        let out_range = TRange::new_debug_checked(offset_item, len_item.create_non_zero().unwrap());
+        let out_range = TRange::new_debug_checked(self.offset, include.create_non_zero().unwrap());
         self.offset = self.offset + include;
 
         Some((out_range, meta).into())
@@ -413,15 +412,11 @@ where
 impl<TIncluded, TExcluded, TMeta, TRange> FusedIterator
     for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
 where
-    TIncluded: FusedIterator<Item: Copy + Into<TRange::Item>>,
-    TExcluded: Iterator<Item: Copy + Into<TRange::Item>>,
+    TIncluded: FusedIterator<Item: UncheckedCast<TRange::Item>>,
+    TExcluded: Iterator<Item: UncheckedCast<TRange::Item>>,
     TMeta: Iterator,
     TRange: CreateRange,
-    TRange::Item: TryFrom<TIncluded::Item, Error: Debug>
-        + TryFrom<TExcluded::Item, Error: Debug>
-        + SignedNonZeroable
-        + Copy
-        + std::ops::Add<Output = TRange::Item>,
+    TRange::Item: SignedNonZeroable + Copy + std::ops::Add<Output = TRange::Item>,
 {
 }
 #[cfg(feature = "range-set-blaze-0_5")]
@@ -433,12 +428,10 @@ mod range_set_blaze_0_5_interop {
     impl<TIncluded, TExcluded, TMeta, TRangeItem> SortedStartsMap<TRangeItem, TMeta::Item>
         for SortedRangesMapIter<TIncluded, TExcluded, TMeta, RangeInclusive<TRangeItem>>
     where
-        TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
-        TExcluded: Iterator<Item: Copy + Into<TRangeItem>>,
+        TIncluded: FusedIterator<Item: UncheckedCast<TRangeItem>>,
+        TExcluded: Iterator<Item: UncheckedCast<TRangeItem>>,
         TMeta: Iterator<Item: ValueRef>,
-        TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
-            + TryFrom<TExcluded::Item, Error: Debug>
-            + Copy
+        TRangeItem: Copy
             + Integer
             + num_traits::One
             + SignedNonZeroable
@@ -450,13 +443,11 @@ mod range_set_blaze_0_5_interop {
     impl<TIncluded, TExcluded, TMeta, TRangeItem> SortedDisjointMap<TRangeItem, TMeta::Item>
         for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
     where
-        TIncluded: FusedIterator<Item: Copy + Into<TRangeItem>>,
-        TExcluded: Iterator<Item: Copy + Into<TRangeItem>>,
+        TIncluded: FusedIterator<Item: UncheckedCast<TRangeItem>>,
+        TExcluded: Iterator<Item: UncheckedCast<TRangeItem>>,
         TMeta: Iterator<Item: ValueRef>,
-        TRangeItem: TryFrom<TIncluded::Item, Error: Debug>
-            + TryFrom<TExcluded::Item, Error: Debug>
-            + Copy
-            + range_set_blaze_0_5::Integer
+        TRangeItem: Copy
+            + Integer
             + num_traits::One
             + SignedNonZeroable
             + std::ops::Sub<Output = TRangeItem>
@@ -467,8 +458,8 @@ mod range_set_blaze_0_5_interop {
     impl<TIncluded, TExcluded, TMeta> SortedStartsMap<u64, TMeta>
         for SourceIteratorMap<TIncluded, TExcluded, TMeta>
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<u64>,
+        TExcluded: UncheckedCast<u64>,
         TMeta: ValueRef,
     {
     }
@@ -476,8 +467,8 @@ mod range_set_blaze_0_5_interop {
     impl<TIncluded, TExcluded, TMeta> SortedDisjointMap<u64, TMeta>
         for SourceIteratorMap<TIncluded, TExcluded, TMeta>
     where
-        TIncluded: Copy + Into<u64>,
-        TExcluded: Copy + Into<u64>,
+        TIncluded: UncheckedCast<u64>,
+        TExcluded: UncheckedCast<u64>,
         TMeta: ValueRef,
     {
     }
