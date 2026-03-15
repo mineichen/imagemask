@@ -6,58 +6,62 @@ macro_rules! impl_debug_checked_cast {
     ($src:ty, $dst:ty) => {
         impl UncheckedCast<$dst> for $src {
             fn cast_unchecked(self) -> $dst {
-                debug_assert!(
-                    self <= (<$dst>::MAX as $src),
-                    "Expected {}{} <= {}::MAX",
-                    self,
-                    core::any::type_name::<$src>(),
-                    core::any::type_name::<$dst>()
-                );
+                if core::mem::size_of::<$src>() > core::mem::size_of::<$dst>() {
+                    debug_assert!(
+                        self <= (<$dst>::MAX as $src),
+                        "Expected {}{} <= {}::MAX",
+                        self,
+                        core::any::type_name::<$src>(),
+                        core::any::type_name::<$dst>()
+                    );
+                }
                 self as _
             }
         }
     };
 }
 
-macro_rules! impl_unchecked_cast {
-    ($src:ty, $dst:ty) => {
-        impl UncheckedCast<$dst> for $src {
-            fn cast_unchecked(self) -> $dst {
-                self as _
-            }
-        }
-    };
-}
-
-impl_unchecked_cast!(u8, u8);
-impl_unchecked_cast!(u8, u16);
-impl_unchecked_cast!(u8, u32);
-impl_unchecked_cast!(u8, u64);
-impl_unchecked_cast!(u8, u128);
+impl_debug_checked_cast!(u8, u8);
+impl_debug_checked_cast!(u8, u16);
+impl_debug_checked_cast!(u8, u32);
+impl_debug_checked_cast!(u8, u64);
+impl_debug_checked_cast!(u8, u128);
+impl_debug_checked_cast!(u8, usize);
 
 impl_debug_checked_cast!(u16, u8);
-impl_unchecked_cast!(u16, u16);
-impl_unchecked_cast!(u16, u32);
-impl_unchecked_cast!(u16, u64);
-impl_unchecked_cast!(u16, u128);
+impl_debug_checked_cast!(u16, u16);
+impl_debug_checked_cast!(u16, u32);
+impl_debug_checked_cast!(u16, u64);
+impl_debug_checked_cast!(u16, u128);
+impl_debug_checked_cast!(u16, usize);
 
 impl_debug_checked_cast!(u32, u8);
 impl_debug_checked_cast!(u32, u16);
-impl_unchecked_cast!(u32, u32);
-impl_unchecked_cast!(u32, u64);
-impl_unchecked_cast!(u32, u128);
+impl_debug_checked_cast!(u32, u32);
+impl_debug_checked_cast!(u32, u64);
+impl_debug_checked_cast!(u32, u128);
+impl_debug_checked_cast!(u32, usize);
 
 impl_debug_checked_cast!(u64, u8);
 impl_debug_checked_cast!(u64, u16);
 impl_debug_checked_cast!(u64, u32);
-impl_unchecked_cast!(u64, u64);
-impl_unchecked_cast!(u64, u128);
+impl_debug_checked_cast!(u64, u64);
+impl_debug_checked_cast!(u64, u128);
+impl_debug_checked_cast!(u64, usize);
 
 impl_debug_checked_cast!(u128, u8);
 impl_debug_checked_cast!(u128, u16);
 impl_debug_checked_cast!(u128, u32);
 impl_debug_checked_cast!(u128, u64);
-impl_unchecked_cast!(u128, u128);
+impl_debug_checked_cast!(u128, u128);
+impl_debug_checked_cast!(u128, usize);
+
+impl_debug_checked_cast!(usize, u8);
+impl_debug_checked_cast!(usize, u16);
+impl_debug_checked_cast!(usize, u32);
+impl_debug_checked_cast!(usize, u64);
+impl_debug_checked_cast!(usize, u128);
+impl_debug_checked_cast!(usize, usize);
 
 #[cfg(test)]
 mod tests {
