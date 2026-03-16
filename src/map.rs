@@ -1,17 +1,20 @@
 use std::{
-    cell::RefCell,
-    collections::VecDeque,
     fmt::{Debug, Display},
-    iter::FusedIterator,
-    marker::PhantomData,
     num::NonZero,
-    ops::{Range, RangeInclusive},
-    rc::Rc,
+    ops::Range,
 };
 
 use num_traits::Zero;
 
-use crate::{CreateRange, NonZeroRange, SignedNonZeroable, UncheckedCast};
+use crate::{CreateRange, NonZeroRange, UncheckedCast};
+
+mod iter;
+mod map_inplace;
+mod offsets_iter;
+
+pub use iter::*;
+pub use map_inplace::*;
+pub use offsets_iter::*;
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -113,13 +116,12 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
     {
-        SortedRangesMapIter {
-            include: self.included.iter().copied(),
-            excluded: self.excluded.iter().copied(),
-            meta: self.meta.iter(),
-            offset: Zero::zero(),
-            _out: PhantomData,
-        }
+        SortedRangesMapIter::new(
+            self.included.iter().copied(),
+            self.excluded.iter().copied(),
+            self.meta.iter(),
+            Zero::zero(),
+        )
     }
 
     #[allow(clippy::len_without_is_empty, reason = "is_empty would always be true")]
@@ -144,172 +146,12 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
     {
-        SortedRangesMapIter {
-            include: self.included.into_iter(),
-            excluded: self.excluded.into_iter(),
-            meta: self.meta.into_iter(),
-            offset: Zero::zero(),
-            _out: PhantomData,
-        }
-    }
-
-    pub fn map_inplace<TIter, TFun>(self, f: TFun) -> Option<Self>
-    where
-        TIter: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
-        TFun: FnOnce(SourceIteratorMap<TIncluded, TExcluded, TMeta>) -> TIter,
-        TIncluded: TryFrom<u64, Error: Debug> + Clone,
-        TExcluded: TryFrom<u64, Error: Debug> + Clone,
-        TMeta: Clone,
-    {
-        let original_len = self.included.len();
-        let cell = Rc::new(RefCell::new((self, 0usize)));
-
-        let source = SourceIteratorMap {
-            cell: cell.clone(),
-            offset: 0,
-            original_len,
-        };
-
-        let items = f(source);
-        let offsets_iter = RangeToOffsetsIterMap::<_, TIncluded, TExcluded, TMeta>::new(items);
-        let mut cache: VecDeque<(TExcluded, TIncluded, TMeta)> = VecDeque::new();
-        let mut write_pos = 0;
-
-        let write_tuple =
-            |col: &mut SortedRangesMap<_, _, Vec<_>>, (excl, incl, meta), write_pos: &mut usize| {
-                if *write_pos < col.included.len() {
-                    col.excluded[*write_pos] = excl;
-                    col.included[*write_pos] = incl;
-                    col.meta[*write_pos] = meta;
-                } else {
-                    col.excluded.push(excl);
-                    col.included.push(incl);
-                    col.meta.push(meta);
-                }
-                *write_pos += 1;
-            };
-
-        for tuple in offsets_iter {
-            let mut x = cell.borrow_mut();
-            let (read_pos, col) = (x.1, &mut x.0);
-            if (write_pos < read_pos || read_pos >= original_len) && cache.is_empty() {
-                write_tuple(col, tuple, &mut write_pos);
-            } else {
-                cache.push_back(tuple);
-                while (write_pos < read_pos || read_pos >= original_len)
-                    && let Some(t) = cache.pop_front()
-                {
-                    write_tuple(col, t, &mut write_pos)
-                }
-            }
-        }
-
-        let not_empty = {
-            let mut x = cell.borrow_mut();
-            let col = &mut x.0;
-            while let Some(tuple) = cache.pop_front() {
-                write_tuple(col, tuple, &mut write_pos);
-            }
-
-            col.included.truncate(write_pos);
-            col.excluded.truncate(write_pos);
-            col.meta.truncate(write_pos);
-            !x.0.included.is_empty()
-        };
-        not_empty.then(move || {
-            Rc::try_unwrap(cell)
-                .expect("You are not allowed to move SourceIter outside the lambda")
-                .into_inner()
-                .0
-        })
-    }
-}
-
-pub struct RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta> {
-    iter: TIter,
-    prev_end: u64,
-    _phantom: PhantomData<(TIncluded, TExcluded, TMeta)>,
-}
-
-impl<TIter, TIncluded, TExcluded, TMeta> RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta> {
-    pub fn new(iter: TIter) -> Self {
-        Self {
-            iter,
-            prev_end: 0,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<TIter, TIncluded, TExcluded, TMeta> Iterator
-    for RangeToOffsetsIterMap<TIter, TIncluded, TExcluded, TMeta>
-where
-    TIter: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
-    TIncluded: TryFrom<u64, Error: Debug>,
-    TExcluded: TryFrom<u64, Error: Debug>,
-{
-    type Item = (TExcluded, TIncluded, TMeta);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (range, meta) = self.iter.next()?;
-        let (start, end) = range.into_inner();
-        let len = end - start + 1;
-        let gap = start - self.prev_end;
-        self.prev_end = start + len;
-        let excluded = gap.try_into().unwrap();
-        let included = len.try_into().unwrap();
-        Some((excluded, included, meta))
-    }
-}
-
-pub struct SourceIteratorMap<TIncluded, TExcluded, TMeta> {
-    #[allow(clippy::type_complexity)]
-    cell: Rc<RefCell<(SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>, usize)>>,
-    offset: u64,
-    original_len: usize,
-}
-
-unsafe impl<TIncluded: Send, TExcluded: Send, TMeta: Send> Send
-    for SourceIteratorMap<TIncluded, TExcluded, TMeta>
-{
-}
-
-impl<TIncluded, TExcluded, TMeta> FusedIterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
-where
-    TIncluded: UncheckedCast<u64>,
-    TExcluded: UncheckedCast<u64>,
-    TMeta: Clone,
-{
-}
-
-impl<TIncluded, TExcluded, TMeta> Iterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
-where
-    TIncluded: UncheckedCast<u64>,
-    TExcluded: UncheckedCast<u64>,
-    TMeta: Clone,
-{
-    type Item = (RangeInclusive<u64>, TMeta);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut x = self.cell.borrow_mut();
-        let (col, read_pos) = &mut *x;
-        if *read_pos >= self.original_len {
-            return None;
-        }
-        let exclude = (*col.excluded.get(*read_pos)?).cast_unchecked();
-        self.offset += exclude;
-
-        let include = (*col.included.get(*read_pos)?).cast_unchecked();
-        let out_range =
-            RangeInclusive::new_debug_checked(self.offset, NonZero::new(include).unwrap());
-        self.offset += include;
-
-        // Todo: Unsafe MaybeInit code allows reuse of this...
-        // We should be able to reduce cloning to a minimum
-        let meta = col.meta[*read_pos].clone();
-        *read_pos += 1;
-
-        Some((out_range, meta))
+        SortedRangesMapIter::new(
+            self.included.into_iter(),
+            self.excluded.into_iter(),
+            self.meta.into_iter(),
+            Zero::zero(),
+        )
     }
 }
 
@@ -325,13 +167,12 @@ impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>, TMeta> IntoIt
     >;
 
     fn into_iter(self) -> Self::IntoIter {
-        SortedRangesMapIter {
-            include: self.included.into_iter(),
-            excluded: self.excluded.into_iter(),
-            meta: self.meta.into_iter(),
-            offset: 0,
-            _out: PhantomData,
-        }
+        SortedRangesMapIter::new(
+            self.included.into_iter(),
+            self.excluded.into_iter(),
+            self.meta.into_iter(),
+            0,
+        )
     }
 }
 
@@ -369,114 +210,6 @@ impl<TMeta> MetaRange<NonZeroRange<u64>, TMeta> {
     }
 }
 
-pub struct SortedRangesMapIter<
-    TIncludedIter,
-    TExcludedIter,
-    TMetaIter: Iterator,
-    TRange: CreateRange,
-> {
-    include: TIncludedIter,
-    excluded: TExcludedIter,
-    meta: TMetaIter,
-    offset: TRange::Item,
-    _out: PhantomData<TRange>,
-}
-
-impl<
-    TIncluded: Iterator<Item: UncheckedCast<TRange::Item>>,
-    TExcluded: Iterator<Item: UncheckedCast<TRange::Item>>,
-    TMeta: Iterator,
-    TRange: CreateRange,
-> Iterator for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
-where
-    TRange::Item: SignedNonZeroable + Copy + std::ops::Add<Output = TRange::Item>,
-{
-    type Item = TRange::ListItem<TMeta::Item>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let exclude = self.excluded.next()?.cast_unchecked();
-        self.offset = self.offset + exclude;
-
-        let Some(include) = self.include.next() else {
-            unreachable!("There must be more include");
-        };
-        let include = include.cast_unchecked();
-        let Some(meta) = self.meta.next() else {
-            unreachable!("There must be more metadata");
-        };
-
-        let out_range = TRange::new_debug_checked(self.offset, include.create_non_zero().unwrap());
-        self.offset = self.offset + include;
-
-        Some((out_range, meta).into())
-    }
-}
-
-impl<TIncluded, TExcluded, TMeta, TRange> FusedIterator
-    for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
-where
-    TIncluded: FusedIterator<Item: UncheckedCast<TRange::Item>>,
-    TExcluded: Iterator<Item: UncheckedCast<TRange::Item>>,
-    TMeta: Iterator,
-    TRange: CreateRange,
-    TRange::Item: SignedNonZeroable + Copy + std::ops::Add<Output = TRange::Item>,
-{
-}
-#[cfg(feature = "range-set-blaze-0_5")]
-mod range_set_blaze_0_5_interop {
-    use super::*;
-    use range_set_blaze_0_5::{Integer, SortedDisjointMap, SortedStartsMap, ValueRef};
-    use std::ops::RangeInclusive;
-
-    impl<TIncluded, TExcluded, TMeta, TRangeItem> SortedStartsMap<TRangeItem, TMeta::Item>
-        for SortedRangesMapIter<TIncluded, TExcluded, TMeta, RangeInclusive<TRangeItem>>
-    where
-        TIncluded: FusedIterator<Item: UncheckedCast<TRangeItem>>,
-        TExcluded: Iterator<Item: UncheckedCast<TRangeItem>>,
-        TMeta: Iterator<Item: ValueRef>,
-        TRangeItem: Copy
-            + Integer
-            + num_traits::One
-            + SignedNonZeroable
-            + std::ops::Sub<Output = TRangeItem>
-            + std::ops::Add<Output = TRangeItem>,
-    {
-    }
-
-    impl<TIncluded, TExcluded, TMeta, TRangeItem> SortedDisjointMap<TRangeItem, TMeta::Item>
-        for SortedRangesMapIter<TIncluded, TExcluded, TMeta, std::ops::RangeInclusive<TRangeItem>>
-    where
-        TIncluded: FusedIterator<Item: UncheckedCast<TRangeItem>>,
-        TExcluded: Iterator<Item: UncheckedCast<TRangeItem>>,
-        TMeta: Iterator<Item: ValueRef>,
-        TRangeItem: Copy
-            + Integer
-            + num_traits::One
-            + SignedNonZeroable
-            + std::ops::Sub<Output = TRangeItem>
-            + std::ops::Add<Output = TRangeItem>,
-    {
-    }
-
-    impl<TIncluded, TExcluded, TMeta> SortedStartsMap<u64, TMeta>
-        for SourceIteratorMap<TIncluded, TExcluded, TMeta>
-    where
-        TIncluded: UncheckedCast<u64>,
-        TExcluded: UncheckedCast<u64>,
-        TMeta: ValueRef,
-    {
-    }
-
-    impl<TIncluded, TExcluded, TMeta> SortedDisjointMap<u64, TMeta>
-        for SourceIteratorMap<TIncluded, TExcluded, TMeta>
-    where
-        TIncluded: UncheckedCast<u64>,
-        TExcluded: UncheckedCast<u64>,
-        TMeta: ValueRef,
-    {
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{num::NonZero, ops::RangeInclusive};
@@ -488,16 +221,16 @@ mod tests {
         use super::*;
         use range_set_blaze_0_5::{SortedDisjointMap, ValueRef};
         #[derive(PartialEq, Eq, Clone, Debug)]
-        struct MetaItem(&'static str);
+        struct TestMetaItem(&'static str);
 
-        impl From<&'static str> for MetaItem {
+        impl From<&'static str> for TestMetaItem {
             fn from(value: &'static str) -> Self {
                 Self(value)
             }
         }
 
-        impl ValueRef for MetaItem {
-            type Target = MetaItem;
+        impl ValueRef for TestMetaItem {
+            type Target = TestMetaItem;
 
             fn into_value(self) -> Self::Target {
                 self
@@ -506,12 +239,12 @@ mod tests {
         #[test]
         fn combine_owned() {
             //type MetaItem = String;
-            let a = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+            let a = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (10u32..30, "a_first".into()),
                 (42..50, "a_second".into()),
             ])
             .unwrap();
-            let b = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+            let b = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (20u32..30, "b_first".into()),
                 (41..45, "b_second".into()),
             ])
@@ -526,9 +259,9 @@ mod tests {
 
             assert_eq!(
                 vec![
-                    (10usize..30, MetaItem::from("a_first")),
-                    (41..42, MetaItem::from("b_second")),
-                    (42..50, MetaItem::from("a_second"))
+                    (10usize..30, TestMetaItem::from("a_first")),
+                    (41..42, TestMetaItem::from("b_second")),
+                    (42..50, TestMetaItem::from("a_second"))
                 ],
                 result
             );
@@ -537,12 +270,12 @@ mod tests {
         fn combine_inline() {
             use range_set_blaze_0_5::SortedDisjointMap;
 
-            let a = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+            let a = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (10u32..30, "a_first".into()),
                 (42..50, "a_second".into()),
             ])
             .unwrap();
-            let b = SortedRangesMap::<u8, u8, Vec<MetaItem>>::try_from_ordered_iter([
+            let b = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (20u32..30, "b_first".into()),
                 (41..45, "b_second".into()),
             ])
@@ -559,9 +292,9 @@ mod tests {
 
             assert_eq!(
                 vec![
-                    (10u64..30, MetaItem::from("a_first")),
-                    (41..42, MetaItem::from("b_second")),
-                    (42..50, MetaItem::from("a_second"))
+                    (10u64..30, TestMetaItem::from("a_first")),
+                    (41..42, TestMetaItem::from("b_second")),
+                    (42..50, TestMetaItem::from("a_second"))
                 ],
                 a.iter_owned::<Range<u64>>().collect::<Vec<_>>()
             );

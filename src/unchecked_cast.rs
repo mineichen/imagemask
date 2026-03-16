@@ -1,3 +1,12 @@
+/// Unchecked cast between unsigned integer types.
+/// Cast fails during debug, but silently continues in release builds.
+/// # Examples
+/// ```
+/// use imask::UncheckedCast;
+///
+/// let a: u8 = 255;
+/// let b: u16 = a.cast_unchecked();
+///
 pub trait UncheckedCast<T>: Copy {
     fn cast_unchecked(self) -> T;
 }
