@@ -1,7 +1,15 @@
 [package]
 name = "imask"
 version = "0.0.1"
+authors = ["Markus Ineichen <kusi.ineichen@gmail.com>"]
+description = "Represent boolean image masks as collection/iterator of ranges"
+repository = "https://github.com/mineichen/imask"
+keywordsR = ["boolean", "image", "ranges"]
+categories = ["data-structures", "computer-vision", "algorithms"]
+readme = "README.md"
+license = "MIT"
 edition = "2024"
+
 
 [dependencies]
 itertools = "0.14.0"

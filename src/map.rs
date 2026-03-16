@@ -32,7 +32,7 @@ pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
 }
 impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded, TMeta> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NonEmptyOrderedRanges")
+        f.debug_struct("SortedRangesMap")
             .field("range_count", &self.included.len())
             .finish()
     }
