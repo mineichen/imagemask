@@ -89,7 +89,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// Returns Some(SortedRanges) if non-empty, None if empty.
     /// ```
     /// use std::ops::RangeInclusive;
-    /// use imagemask::SortedRanges;
+    /// use imask::{SortedRanges, SourceIterator};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60])?;

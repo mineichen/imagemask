@@ -6,7 +6,6 @@ use std::fmt::Debug;
 mod assert_sorted_iter;
 #[cfg(feature = "async-io")]
 mod async_io;
-mod merge_ordered_iter;
 mod non_zero;
 mod range_to_offsets_iter;
 mod sanitize_sorted_disjoint;
@@ -17,7 +16,6 @@ mod unchecked_cast;
 pub use assert_sorted_iter::*;
 #[cfg(feature = "async-io")]
 pub use async_io::*;
-pub use merge_ordered_iter::*;
 pub use non_zero::*;
 pub use range_to_offsets_iter::*;
 pub use sanitize_sorted_disjoint::SanitizeSortedDisjoint;
