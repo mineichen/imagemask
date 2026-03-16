@@ -1,15 +1,100 @@
 use std::{fmt::Debug, iter::FusedIterator, ops::RangeInclusive};
 
-pub struct SanitizeSortedDisjoint<I, T> {
+/// Sanitize a SortedStarts into a disjoint iterator of ranges. Iteration stops when error is detected.
+/// It will merge adjacent ranges but fail, if a item with a smaller start than the current accumulator.start is found, as this could mean, that the output would not be sorted.
+///
+/// The Example shows a edge-case, where unsorted inputs are processed successfully, as long as the accumulator.start is smaller than the next item.start
+///
+/// # Panics
+/// Panics in drop if a error occured during iteration and SanitizeSortedDisjoint::into_result was not called (See `SanitizeSortedDisjointError` for more details)
+/// If SanitizeSortedDisjoint::into_result is called after iteration, this function is panic-free and can be used with untrusted input
+/// ```
+/// let result = imask::SanitizeSortedDisjoint::new([1u8..=5, 6..=8, 5..=10, 20..=30]).collect::<Vec<_>>();
+/// assert_eq!(result, vec![1..=10, 20..=30]);
+/// ```
+/// Error handling example:
+/// ```
+/// use imask::{SanitizeSortedDisjoint, SanitizeSortedDisjointError};
+///
+/// let mut iter = SanitizeSortedDisjoint::new([0u8..=1, 2u8..=0u8]);
+/// let result = (&mut iter).collect::<Vec<_>>();
+/// assert_eq!(vec![0u8..=1], result);
+/// assert_eq!(Err(SanitizeSortedDisjointError::StartAfterEnd { start: 2, end: 0 }), iter.into_result());
+/// ```
+///
+/// ```
+/// use imask::{SanitizeSortedDisjoint, SanitizeSortedDisjointError};
+///
+/// let mut iter = SanitizeSortedDisjoint::new([10u8..=11, 9u8..=10u8]);
+/// let result = (&mut iter).collect::<Vec<_>>();
+/// assert_eq!(vec![10u8..=11], result);
+/// assert_eq!(Err(SanitizeSortedDisjointError::SmallerStartYielded { start: 9, end: 10, last_start: 10 }), iter.into_result());
+/// ```
+///
+pub struct SanitizeSortedDisjoint<I, T: Debug> {
     iter: I,
-    acc: Option<RangeInclusive<T>>,
+    state: SanitizeSortedDisjointState<T>,
 }
 
-impl<I, T> SanitizeSortedDisjoint<I, T> {
+#[derive(Debug, Default)]
+enum SanitizeSortedDisjointState<T> {
+    Pending(RangeInclusive<T>),
+    Error(SanitizeSortedDisjointError<T>),
+    #[default]
+    Fresh,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum SanitizeSortedDisjointError<T> {
+    #[error("Input not sorted by start")]
+    SmallerStartYielded { start: T, end: T, last_start: T },
+
+    #[error("Start after end: {start} > {end}")]
+    StartAfterEnd { start: T, end: T },
+}
+
+impl<I, T: Debug> SanitizeSortedDisjoint<I, T> {
     pub fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
         Self {
             iter: iter.into_iter(),
-            acc: None,
+            state: Default::default(),
+        }
+    }
+
+    pub fn into_result(mut self) -> Result<(), SanitizeSortedDisjointError<T>> {
+        let mut state = Default::default();
+        std::mem::swap(&mut state, &mut self.state);
+        if let SanitizeSortedDisjointState::Error(e) = state {
+            Err(e)
+        } else {
+            Ok(())
+        }
+    }
+    pub fn check(mut self) -> Result<Self, SanitizeSortedDisjointError<T>> {
+        let mut state = Default::default();
+        std::mem::swap(&mut state, &mut self.state);
+        if let SanitizeSortedDisjointState::Error(e) = state {
+            Err(e)
+        } else {
+            self.state = state;
+            Ok(self)
+        }
+    }
+}
+
+impl<I, T: Debug> Drop for SanitizeSortedDisjoint<I, T> {
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            let mut state = Default::default();
+            std::mem::swap(&mut state, &mut self.state);
+            match state {
+                SanitizeSortedDisjointState::Error(e) if std::thread::panicking() => {
+                    eprintln!("SanitizeSortedDisjoint: {e:?}")
+                }
+                SanitizeSortedDisjointState::Error(e) => panic!("SanitizeSortedDisjoint: {e:?}"),
+                _ => {}
+            }
         }
     }
 }
@@ -21,27 +106,52 @@ where
     type Item = RangeInclusive<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut iter = (&mut self.iter).inspect(|x| {
-            let (start, end) = (x.start(), x.end());
-            debug_assert!(
-                start < end,
-                "Got a range with start > end ({start:?} > {end:?})"
-            )
+        let mut iter = (&mut self.iter).map(|x| {
+            let (start, end) = (*x.start(), *x.end());
+            if start < end {
+                Ok(x)
+            } else {
+                Err(SanitizeSortedDisjointError::StartAfterEnd { start, end })
+            }
         });
-        let mut last = self.acc.take().or_else(|| iter.next())?;
+        let mut last = Default::default();
+        std::mem::swap(&mut self.state, &mut last);
+        let mut last = match last {
+            SanitizeSortedDisjointState::Pending(range_inclusive) => range_inclusive,
+            SanitizeSortedDisjointState::Error(sanitize_error) => {
+                self.state = SanitizeSortedDisjointState::Error(sanitize_error);
+                return None;
+            }
+            SanitizeSortedDisjointState::Fresh => match iter.next()? {
+                Ok(x) => x,
+                Err(e) => {
+                    self.state = SanitizeSortedDisjointState::Error(e);
+                    return None;
+                }
+            },
+        };
         loop {
             match iter.next() {
                 None => return Some(last),
-                Some(next) => {
+                Some(Err(e)) => {
+                    self.state = SanitizeSortedDisjointState::Error(e);
+                    return Some(last);
+                }
+                Some(Ok(next)) => {
                     let (last_start, next_start) = (*last.start(), *next.start());
                     let (last_end, next_end) = (*last.end(), *next.end());
                     if last_start > next_start {
-                        panic!(
-                            "MergeSortedOverlapping: input not sorted by start. Got range {next_start:?} after range starting at {last_start:?}"
+                        self.state = SanitizeSortedDisjointState::Error(
+                            SanitizeSortedDisjointError::SmallerStartYielded {
+                                start: next_start,
+                                end: next_end,
+                                last_start,
+                            },
                         );
+                        return Some(last);
                     }
                     if next_start > last_end + T::one() {
-                        self.acc = Some(next);
+                        self.state = SanitizeSortedDisjointState::Pending(next);
                         return Some(last);
                     }
                     last = last_start..=last_end.max(next_end);
@@ -119,15 +229,45 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "start > end (10 > 9)")]
-    fn range_with_end_bigger_start_after_initial() {
-        SanitizeSortedDisjoint::new([0u32..=2, 10..=9]).next();
+    #[should_panic(expected = "other_error")]
+    fn panic_with_unhandled_iterator_error() {
+        let mut iter = SanitizeSortedDisjoint::new([1u32..=10, 0..=10]);
+        (&mut iter).for_each(|_| {});
+        panic!("other_error");
+    }
+    #[test]
+    #[should_panic(expected = "other_error")]
+    fn inner_panick_doesnt_abort() {
+        SanitizeSortedDisjoint::new([1u32..=10, 0..=10]).for_each(|_| {
+            panic!("other_error");
+        });
     }
 
     #[test]
-    #[should_panic(expected = "start > end (10 > 9)")]
-    fn range_with_end_bigger_start() {
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "StartAfterEnd { start: 10, end: 9 }")
+    )]
+    fn range_with_end_bigger_start_after_initial() {
+        assert_eq!(
+            Some(0..=2),
+            SanitizeSortedDisjoint::new([0u32..=2, 10..=9]).next()
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "StartAfterEnd { start: 10, end: 9 }")
+    )]
+    #[cfg_attr(
+        not(debug_assertions),
+        should_panic(expected = "Panic after wrong item")
+    )]
+
+    fn range_with_end_bigger_start_single() {
         SanitizeSortedDisjoint::new([10u32..=9]).next();
+        panic!("Panic after wrong item");
     }
 
     #[test]
@@ -137,9 +277,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "input not sorted by start")]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "SmallerStartYielded { start: 1, end: 3, last_start: 5 }")
+    )]
     fn out_of_order_panics() {
-        SanitizeSortedDisjoint::new([5u32..=7, 1..=3]).for_each(|_| {});
+        assert_eq!(1, SanitizeSortedDisjoint::new([5u32..=7, 1..=3]).count());
     }
 
     // Allowed as this still causes a valid output
@@ -161,9 +304,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "input not sorted by start")]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "SmallerStartYielded { start: 0, end: 103, last_start: 1 }")
+    )]
     fn out_of_order_with_sooner_start_then_accumulator_start() {
-        SanitizeSortedDisjoint::new([1u32..=5, 3..=7, 0..=103]).next();
+        assert_eq!(
+            1,
+            SanitizeSortedDisjoint::new([1u32..=5, 3..=7, 0..=103]).count()
+        );
     }
 
     #[test]
@@ -242,8 +391,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "input not sorted by start")]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "SmallerStartYielded { start: 1, end: 15, last_start: 20 }")
+    )]
     fn same_start_varied_ends_interleaved_with_others_panics() {
-        SanitizeSortedDisjoint::new([1u8..=5, 1..=10, 20..=30, 1..=15]).for_each(|_| {});
+        assert_eq!(
+            vec![1u8..=10, 20..=30],
+            SanitizeSortedDisjoint::new([1u8..=5, 1..=10, 20..=30, 1..=15]).collect::<Vec<_>>()
+        );
     }
 }

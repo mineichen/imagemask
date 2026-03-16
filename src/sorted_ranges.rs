@@ -85,7 +85,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     }
 
     /// Transform the ranges in-place using a closure.
-    /// The closure receives a SourceIterator and returns an iterator of RangeInclusive<u64>.
+    /// The closure receives a SourceIterator and returns an iterator of `RangeInclusive<u64>`.
     /// Returns Some(SortedRanges) if non-empty, None if empty.
     /// ```
     /// use std::ops::RangeInclusive;

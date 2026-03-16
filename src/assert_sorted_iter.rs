@@ -1,10 +1,21 @@
 use std::fmt::Debug;
 
+/// Makes sure, that the underlying iterator is sorted by the given function,
+/// without causing performance overhead in release builds
+/// ```
+/// use imask::DebugAssertSortedByIter;
+///
+/// let mut iter = DebugAssertSortedByIter::new(vec!["a", "aa", "aaa"], |x: &&str| x.len());
+/// assert_eq!(iter.next(), Some("a"));
+/// assert_eq!(iter.next(), Some("aa"));
+/// assert_eq!(iter.next(), Some("aaa"));
+/// assert_eq!(iter.next(), None);
+/// ```
 pub struct DebugAssertSortedByIter<T, TFn, TOrd>(T, Option<TOrd>, TFn);
 
 impl<TIter, TFn, TOrd> DebugAssertSortedByIter<TIter, TFn, TOrd> {
-    pub fn new(iter: TIter, func: TFn) -> Self {
-        Self(iter, None, func)
+    pub fn new(iter: impl IntoIterator<IntoIter = TIter>, func: TFn) -> Self {
+        Self(iter.into_iter(), None, func)
     }
 }
 

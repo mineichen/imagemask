@@ -1,7 +1,10 @@
 # imask
 
-Represents images (e.g. Annotation-Masks) as iterators of ranges
+Works on top of range-set-blaze to represent image masks as iterator of ranges(e.g. Annotation-Masks). It adds 2-dimensional iterator operators (e.g. dillute, erode) to work with minimal accumulator sizes. If range-set-blaze becomes more stable, it will be added as a mandatory dependency. Until then, multiple versions can can be supported via feature-flags. This project aims to upstream general changes to range-set-blaze if they fit.
 
 # Error Philosophy
 
-When a Iterator is used, the values are expected to successfuly cast to the value of the accumulator. We expect `SortedRanges::<u16, u16>::iter::<u32>()` not to overflow -> This is checked for debug builds, but not if `cfg!(not(debug_assertions))`, as it causes significant slowdown otherwise. You cannot rely on ranges not to be empty in unsafe code, as overflows are not checked. This library continues processing if this ever happens, but adds some lightweight checks in release-mode (e.g. check, if accumulator is > biggest single element).
+When a Iterator is used, the values are expected to successfuly cast to the value of the accumulator. We expect `SortedRanges::<u16, u16>::iter::<u32>()` not to overflow -> This is checked for debug builds, but not if `cfg!(not(debug_assertions))`, as it causes significant slowdown otherwise. You can therefore not rely on ranges not to be empty in unsafe code. This library continues processing if this ever happens, but might add some lightweight assertions in release-mode (e.g. check, if accumulator is > biggest single element).
+When comeing from the unchecked places, error-detection is usually provided by returning a Result or having a method `into_result` for cases where error detection can only happen if the `Iterator` was consumed.
+
+`core::ops::RangeInclusive` and `core::ops::Range` are both expected to have `start < end`.
