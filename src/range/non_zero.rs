@@ -77,22 +77,28 @@ impl<T: PartialOrd + std::ops::Add<Output = T> + num_traits::One>
 
 pub trait SignedNonZeroable: Sized {
     type NonZero;
-    fn strict_add_nonzero(self, other: Self::NonZero) -> Self;
+    fn add_nonzero(self, other: Self::NonZero) -> Self;
     fn create_non_zero(self) -> Option<Self::NonZero>;
+
+    /// # Safety
+    /// Provided value mustn't be 0
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero;
 }
 
 impl SignedNonZeroable for u8 {
     type NonZero = NonZero<u8>;
 
-    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
-        self.strict_add(other.get())
+    #[inline]
+    fn add_nonzero(self, other: Self::NonZero) -> Self {
+        self + other.get()
     }
 
+    #[inline]
     fn create_non_zero(self) -> Option<Self::NonZero> {
         NonZero::new(self)
     }
 
+    #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
@@ -100,13 +106,17 @@ impl SignedNonZeroable for u8 {
 impl SignedNonZeroable for u16 {
     type NonZero = NonZero<u16>;
 
-    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
-        self.strict_add(other.get())
+    #[inline]
+    fn add_nonzero(self, other: Self::NonZero) -> Self {
+        self + other.get()
     }
 
+    #[inline]
     fn create_non_zero(self) -> Option<Self::NonZero> {
         NonZero::new(self)
     }
+
+    #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
@@ -114,14 +124,17 @@ impl SignedNonZeroable for u16 {
 impl SignedNonZeroable for u32 {
     type NonZero = NonZero<u32>;
 
-    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
-        self.strict_add(other.get())
+    #[inline]
+    fn add_nonzero(self, other: Self::NonZero) -> Self {
+        self + other.get()
     }
 
+    #[inline]
     fn create_non_zero(self) -> Option<Self::NonZero> {
         NonZero::new(self)
     }
 
+    #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
@@ -129,14 +142,17 @@ impl SignedNonZeroable for u32 {
 impl SignedNonZeroable for u64 {
     type NonZero = NonZero<u64>;
 
-    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
-        self.strict_add(other.get())
+    #[inline]
+    fn add_nonzero(self, other: Self::NonZero) -> Self {
+        self + other.get()
     }
 
+    #[inline]
     fn create_non_zero(self) -> Option<Self::NonZero> {
         NonZero::new(self)
     }
 
+    #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
@@ -145,14 +161,17 @@ impl SignedNonZeroable for u64 {
 impl SignedNonZeroable for usize {
     type NonZero = NonZero<usize>;
 
-    fn strict_add_nonzero(self, other: Self::NonZero) -> Self {
-        self.strict_add(other.get())
+    #[inline]
+    fn add_nonzero(self, other: Self::NonZero) -> Self {
+        self + other.get()
     }
 
+    #[inline]
     fn create_non_zero(self) -> Option<Self::NonZero> {
         NonZero::new(self)
     }
 
+    #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
@@ -185,7 +204,7 @@ impl<T> NonZeroRange<T> {
     where
         T: Copy + SignedNonZeroable,
     {
-        let end = start.strict_add_nonzero(len);
+        let end = start.add_nonzero(len);
         Self(RangeUnchecked { start, end })
     }
 }

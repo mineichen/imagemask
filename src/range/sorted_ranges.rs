@@ -215,6 +215,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         Ok(Self { included, excluded })
     }
 
+    #[allow(clippy::len_without_is_empty, reason = "Cannot be empty")]
     pub fn len(&self) -> usize {
         self.included.len()
     }

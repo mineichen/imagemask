@@ -52,7 +52,7 @@ impl From<io::Error> for ProtocolError {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Header {
     version: u8,
     included_type: DataType,

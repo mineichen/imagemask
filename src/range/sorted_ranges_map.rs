@@ -35,6 +35,8 @@ impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded
     }
 }
 
+type CopiedSliceIter<'a, T> = std::iter::Copied<std::slice::Iter<'a, T>>;
+
 impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>> {
     pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta) -> Self
     where
@@ -102,8 +104,8 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
     pub fn iter<T: CreateRange<Item: Zero>>(
         &self,
     ) -> SortedRangesMapIter<
-        std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
-        std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
+        CopiedSliceIter<'_, TIncluded>,
+        CopiedSliceIter<'_, TExcluded>,
         std::slice::Iter<'_, TMeta>,
         T,
     >
@@ -261,6 +263,7 @@ where
 }
 
 pub struct SourceIteratorMap<TIncluded, TExcluded, TMeta> {
+    #[allow(clippy::type_complexity)]
     cell: Rc<RefCell<(SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>, usize)>>,
     offset: u64,
     original_len: usize,

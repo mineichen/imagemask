@@ -9,6 +9,7 @@ mod async_io;
 mod merge_ordered_iter;
 mod non_zero;
 mod range_to_offsets_iter;
+mod sanitize_sorted_disjoint;
 mod sorted_ranges;
 mod sorted_ranges_map;
 mod unchecked_cast;
@@ -19,6 +20,7 @@ pub use async_io::*;
 pub use merge_ordered_iter::*;
 pub use non_zero::*;
 pub use range_to_offsets_iter::*;
+pub use sanitize_sorted_disjoint::SanitizeSortedDisjoint;
 pub use sorted_ranges::*;
 pub use sorted_ranges_map::*;
 pub use unchecked_cast::*;
@@ -56,7 +58,7 @@ impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<Output = T>> 
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
     ) -> Self {
-        let end = start.strict_add_nonzero(len) - T::one();
+        let end = start.add_nonzero(len) - T::one();
         start..=end
     }
 }
@@ -70,7 +72,7 @@ impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
     ) -> Self {
-        let end = start.strict_add_nonzero(len);
+        let end = start.add_nonzero(len);
         start..end
     }
 }
