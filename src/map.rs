@@ -6,7 +6,7 @@ use std::{
 
 use num_traits::Zero;
 
-use crate::{CreateRange, NonZeroRange, UncheckedCast};
+use crate::{CreateRange, NonZeroRange, SignedNonZeroable, SortedRangesIter, UncheckedCast};
 
 mod iter;
 mod map_inplace;
@@ -151,6 +151,39 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             self.excluded.into_iter(),
             self.meta.into_iter(),
             Zero::zero(),
+        )
+    }
+
+    pub fn ranges<T: CreateRange>(
+        &self,
+    ) -> SortedRangesIter<
+        std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
+        std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
+        T,
+    >
+    where
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + std::ops::Add<Output = T::Item>,
+    {
+        SortedRangesIter::new(
+            self.included.iter().copied(),
+            self.excluded.iter().copied(),
+            T::Item::default(),
+        )
+    }
+    pub fn ranges_owned<T: CreateRange>(
+        self,
+    ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
+    where
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + std::ops::Add<Output = T::Item>,
+    {
+        SortedRangesIter::new(
+            self.included.into_iter(),
+            self.excluded.into_iter(),
+            T::Item::default(),
         )
     }
 }
