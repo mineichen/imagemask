@@ -6,11 +6,13 @@ use std::{
 
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable, UncheckedCast};
 
+mod chunk_by_row;
 mod iter;
 mod map_inplace;
 mod offsets_iter;
 mod sanitize_sorted_disjoint;
 
+pub use chunk_by_row::*;
 pub use iter::*;
 pub use map_inplace::*;
 pub use offsets_iter::*;
