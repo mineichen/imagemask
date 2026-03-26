@@ -9,10 +9,12 @@ use crate::{CreateRange, NonZeroRange, SignedNonZeroable, UncheckedCast};
 mod iter;
 mod map_inplace;
 mod offsets_iter;
+mod sanitize_sorted_disjoint;
 
 pub use iter::*;
 pub use map_inplace::*;
 pub use offsets_iter::*;
+pub use sanitize_sorted_disjoint::*;
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types

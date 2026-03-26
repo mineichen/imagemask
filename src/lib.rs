@@ -9,7 +9,6 @@ mod async_io;
 mod create_range;
 mod map;
 mod non_zero;
-mod sanitize_sorted_disjoint;
 mod set;
 mod unchecked_cast;
 
@@ -19,7 +18,6 @@ pub use async_io::*;
 pub use create_range::*;
 pub use map::*;
 pub use non_zero::*;
-pub use sanitize_sorted_disjoint::*;
 pub use set::*;
 pub use unchecked_cast::*;
 

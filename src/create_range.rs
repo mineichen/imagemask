@@ -7,6 +7,7 @@ pub trait CreateRange: Sized {
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
     ) -> Self;
+    fn start(&self) -> Self::Item;
 }
 
 impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<Output = T>> CreateRange
@@ -23,6 +24,10 @@ impl<T: SignedNonZeroable + Copy + num_traits::One + std::ops::Sub<Output = T>> 
         let end = start.add_nonzero(len) - T::one();
         start..=end
     }
+
+    fn start(&self) -> Self::Item {
+        *std::ops::RangeInclusive::start(self)
+    }
 }
 
 impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
@@ -37,6 +42,10 @@ impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
         let end = start.add_nonzero(len);
         start..end
     }
+
+    fn start(&self) -> Self::Item {
+        self.start
+    }
 }
 
 impl<T: SignedNonZeroable + Copy + PartialEq> CreateRange for NonZeroRange<T> {
@@ -49,5 +58,8 @@ impl<T: SignedNonZeroable + Copy + PartialEq> CreateRange for NonZeroRange<T> {
         len: <Self::Item as SignedNonZeroable>::NonZero,
     ) -> Self {
         NonZeroRange::from_span(start, len)
+    }
+    fn start(&self) -> Self::Item {
+        self.start
     }
 }
