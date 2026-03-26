@@ -147,14 +147,19 @@ where
         })?;
 
         if range.end() > self.next_line_start {
+            // # Safety
+            // Checked in if...
             let remaining_len = unsafe {
                 SignedNonZeroable::create_non_zero_unchecked(range.end() - self.next_line_start)
             };
             shared.pending_nextline =
                 Some(R::new_debug_checked(self.next_line_start, remaining_len));
 
-            let clip_len =
-                SignedNonZeroable::create_non_zero(self.next_line_start - range.start()).unwrap();
+            // # Safety
+            // Would return None above, if start >= self.next_line_start
+            let clip_len = unsafe {
+                SignedNonZeroable::create_non_zero_unchecked(self.next_line_start - range.start())
+            };
             Some(R::new_debug_checked(range.start(), clip_len))
         } else {
             Some(range)
