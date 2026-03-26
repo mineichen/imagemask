@@ -76,7 +76,7 @@ impl<T: PartialOrd + std::ops::Add<Output = T> + num_traits::One>
 }
 
 pub trait SignedNonZeroable: Sized {
-    type NonZero;
+    type NonZero: Into<Self> + Copy;
     fn add_nonzero(self, other: Self::NonZero) -> Self;
     fn create_non_zero(self) -> Option<Self::NonZero>;
 
