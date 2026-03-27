@@ -1,6 +1,6 @@
 use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 
-use crate::{CreateRange, SignedNonZeroable, UncheckedCast};
+use crate::{CreateRange, SignedNonZeroable};
 
 pub trait ImaskSet: Iterator + Sized {
     fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
@@ -102,24 +102,17 @@ where
     fn drop(&mut self) {
         let mut shared = self.shared.borrow_mut();
         if self.pending.take().is_some() && shared.pending_nextline.is_none() {
-            loop {
-                match shared.source.next() {
-                    Some(r) => {
-                        if r.start() >= self.next_line_start {
-                            shared.pending_nextline = Some(r);
-                            break;
-                        } else if r.end() > self.next_line_start {
-                            let remaining_len = unsafe {
-                                SignedNonZeroable::create_non_zero_unchecked(
-                                    r.end() - self.next_line_start,
-                                )
-                            };
-                            shared.pending_nextline =
-                                Some(R::new_debug_checked(self.next_line_start, remaining_len));
-                            break;
-                        }
-                    }
-                    None => break,
+            for r in &mut shared.source {
+                if r.start() >= self.next_line_start {
+                    shared.pending_nextline = Some(r);
+                    break;
+                } else if r.end() > self.next_line_start {
+                    let remaining_len = unsafe {
+                        SignedNonZeroable::create_non_zero_unchecked(r.end() - self.next_line_start)
+                    };
+                    shared.pending_nextline =
+                        Some(R::new_debug_checked(self.next_line_start, remaining_len));
+                    break;
                 }
             }
         }
@@ -152,6 +145,7 @@ where
             let remaining_len = unsafe {
                 SignedNonZeroable::create_non_zero_unchecked(range.end() - self.next_line_start)
             };
+
             shared.pending_nextline =
                 Some(R::new_debug_checked(self.next_line_start, remaining_len));
 
