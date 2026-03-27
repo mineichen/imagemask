@@ -10,12 +10,14 @@ mod chunk_by_row;
 mod iter;
 mod map_inplace;
 mod offsets_iter;
+mod rect;
 mod sanitize_sorted_disjoint;
 
 pub use chunk_by_row::*;
 pub use iter::*;
 pub use map_inplace::*;
 pub use offsets_iter::*;
+pub use rect::*;
 pub use sanitize_sorted_disjoint::*;
 
 pub trait ImaskSet: Iterator + Sized {
