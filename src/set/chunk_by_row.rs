@@ -2,36 +2,26 @@ use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 
 use crate::{CreateRange, SignedNonZeroable};
 
-pub trait ImaskSet: Iterator + Sized {
-    fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
-        self,
-        old_image_width: <R::Item as SignedNonZeroable>::NonZero,
-    ) -> ChunkByRowRanges<Self, R>;
+/// result of
+pub struct ChunkByRowRanges<T: Iterator, R: CreateRange<Item: SignedNonZeroable>> {
+    shared: Rc<RefCell<Shared<T>>>,
+    image_width: <R::Item as SignedNonZeroable>::NonZero,
+    range: PhantomData<R>,
 }
 
-impl<I: Iterator> ImaskSet for I {
+impl<T: Iterator, R: CreateRange<Item: SignedNonZeroable>> ChunkByRowRanges<T, R> {
     /// # Panics
     /// If the previous RowIterator is kept when getting the next RowIterator
-    fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
-        self,
-        old_image_width: <R::Item as SignedNonZeroable>::NonZero,
-    ) -> ChunkByRowRanges<Self, R> {
+    pub(crate) fn new(source: T, old_image_width: <R::Item as SignedNonZeroable>::NonZero) -> Self {
         ChunkByRowRanges {
             shared: Rc::new(RefCell::new(Shared {
-                source: self,
+                source,
                 pending_nextline: None,
             })),
             image_width: old_image_width,
             range: PhantomData,
         }
     }
-}
-
-/// result of
-pub struct ChunkByRowRanges<T: Iterator, R: CreateRange<Item: SignedNonZeroable>> {
-    shared: Rc<RefCell<Shared<T>>>,
-    image_width: <R::Item as SignedNonZeroable>::NonZero,
-    range: PhantomData<R>,
 }
 
 struct Shared<T: Iterator> {
@@ -174,9 +164,7 @@ mod tests {
     #[test]
     fn split_without_linebreak() {
         let source = [0..4, 5..10, 11..20];
-        let sums = source
-            .into_iter()
-            .chunk_by_row_lending::<Range<usize>>(NON_ZERO_TEN)
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         assert_eq!(sums, vec!((0, vec![0..4, 5..10]), (1, vec![11..20])));
@@ -184,9 +172,7 @@ mod tests {
     #[test]
     fn split_with_linebreak() {
         let source = [0..20];
-        let sums = source
-            .into_iter()
-            .chunk_by_row_lending::<Range<usize>>(NON_ZERO_TEN)
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
             .map(|(row, i)| (row, i.map(|x| x.len()).sum::<usize>()))
             .collect::<Vec<_>>();
         assert_eq!(sums, vec!((0, 10), (1, 10)));
@@ -194,9 +180,7 @@ mod tests {
     #[test]
     fn split_with_filtered() {
         let source = [0..3, 6..11, 12..20];
-        let sums = source
-            .into_iter()
-            .chunk_by_row_lending::<Range<usize>>(NON_ZERO_TEN)
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
             .skip(1)
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
@@ -205,9 +189,7 @@ mod tests {
     #[test]
     fn split_with_filtered_empty() {
         let source = [0..3, 4..5, 6..11, 12..20];
-        let sums = source
-            .into_iter()
-            .chunk_by_row_lending::<Range<usize>>(NON_ZERO_TEN)
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
             .skip(1)
             .map(|(row, i)| (row, i.map(|x| x.len()).sum::<usize>()))
             .collect::<Vec<_>>();

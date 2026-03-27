@@ -18,6 +18,24 @@ pub use map_inplace::*;
 pub use offsets_iter::*;
 pub use sanitize_sorted_disjoint::*;
 
+pub trait ImaskSet: Iterator + Sized {
+    /// # Panics
+    /// If the previous RowIterator is kept when getting the next RowIterator
+    fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
+        self,
+        old_image_width: <R::Item as SignedNonZeroable>::NonZero,
+    ) -> ChunkByRowRanges<Self, R>;
+}
+
+impl<I: Iterator> ImaskSet for I {
+    fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
+        self,
+        old_image_width: <R::Item as SignedNonZeroable>::NonZero,
+    ) -> ChunkByRowRanges<Self, R> {
+        ChunkByRowRanges::new(self, old_image_width)
+    }
+}
+
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
 /// Included represents the number of pixels to include, excluded encodes the gap between two included ranges
