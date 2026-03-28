@@ -9,6 +9,7 @@ mod async_io;
 mod create_range;
 mod map;
 mod non_zero;
+mod rect;
 mod set;
 mod unchecked_cast;
 
@@ -18,6 +19,7 @@ pub use async_io::*;
 pub use create_range::*;
 pub use map::*;
 pub use non_zero::*;
+pub use rect::*;
 pub use set::*;
 pub use unchecked_cast::*;
 

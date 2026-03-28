@@ -1,11 +1,13 @@
 use std::{
     fmt::{Debug, Display},
     num::NonZero,
-    ops::Range,
+    ops::{Add, Div, Range, Rem, Sub},
 };
 
 use crate::{CreateRange, NonZeroRange, SignedNonZeroable, UncheckedCast};
+use num_traits::{One, Zero};
 
+mod bounds_inspector;
 mod chunk_by_row;
 mod iter;
 mod map_inplace;
@@ -13,6 +15,7 @@ mod offsets_iter;
 mod rect;
 mod sanitize_sorted_disjoint;
 
+pub use bounds_inspector::*;
 pub use chunk_by_row::*;
 pub use iter::*;
 pub use map_inplace::*;
@@ -27,6 +30,22 @@ pub trait ImaskSet: Iterator + Sized {
         self,
         old_image_width: <R::Item as SignedNonZeroable>::NonZero,
     ) -> ChunkByRowRanges<Self, R>;
+
+    fn inspect_bounds<R>(
+        self,
+        image_width: <R::Item as SignedNonZeroable>::NonZero,
+    ) -> BoundsInspector<Self, R>
+    where
+        R: CreateRange<Item: SignedNonZeroable>,
+        R::Item: num_traits::Bounded
+            + Copy
+            + Ord
+            + num_traits::Zero
+            + One
+            + Add<Output = R::Item>
+            + Sub<Output = R::Item>
+            + Rem<Output = R::Item>
+            + Div<Output = R::Item>;
 }
 
 impl<I: Iterator> ImaskSet for I {
@@ -35,6 +54,25 @@ impl<I: Iterator> ImaskSet for I {
         old_image_width: <R::Item as SignedNonZeroable>::NonZero,
     ) -> ChunkByRowRanges<Self, R> {
         ChunkByRowRanges::new(self, old_image_width)
+    }
+
+    fn inspect_bounds<R>(
+        self,
+        image_width: <R::Item as SignedNonZeroable>::NonZero,
+    ) -> BoundsInspector<Self, R>
+    where
+        R: CreateRange<Item: SignedNonZeroable>,
+        R::Item: num_traits::Bounded
+            + Copy
+            + Ord
+            + num_traits::Zero
+            + One
+            + Add<Output = R::Item>
+            + Sub<Output = R::Item>
+            + Rem<Output = R::Item>
+            + Div<Output = R::Item>,
+    {
+        BoundsInspector::new(self, image_width)
     }
 }
 
@@ -62,8 +100,7 @@ impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     pub fn new<TRange>(r: NonZeroRange<TRange>) -> Self
     where
-        TRange:
-            UncheckedCast<TIncluded> + UncheckedCast<TExcluded> + std::ops::Sub<Output = TRange>,
+        TRange: UncheckedCast<TIncluded> + UncheckedCast<TExcluded> + Sub<Output = TRange>,
         TIncluded: TryFrom<u64>,
     {
         Self {
@@ -135,7 +172,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     where
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
-        T::Item: Default + Copy + SignedNonZeroable + std::ops::Add<Output = T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item>,
     {
         SortedRangesIter::new(
             self.included.iter().copied(),
@@ -149,7 +186,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     where
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
-        T::Item: Default + Copy + SignedNonZeroable + std::ops::Add<Output = T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item>,
     {
         SortedRangesIter::new(
             self.included.into_iter(),

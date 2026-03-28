@@ -1,6 +1,9 @@
+use std::cmp::{max, min};
 use std::fmt::Debug;
 use std::num::NonZero;
 use std::ops::{Add, Deref, Range, RangeInclusive, Sub};
+
+use num_traits::{Bounded, One};
 
 /// NonZero is only checked during Debug and should not be relied upon for safety
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -52,15 +55,13 @@ impl<T: PartialOrd> TryFrom<std::ops::Range<T>> for NonZeroRange<T> {
     }
 }
 
-impl<T: std::ops::Sub<Output = T> + num_traits::One> From<NonZeroRange<T>>
-    for std::ops::RangeInclusive<T>
-{
+impl<T: Sub<Output = T> + One> From<NonZeroRange<T>> for std::ops::RangeInclusive<T> {
     fn from(value: NonZeroRange<T>) -> Self {
         value.0.start..=value.0.end - T::one()
     }
 }
-impl<T: PartialOrd + std::ops::Add<Output = T> + num_traits::One>
-    TryFrom<std::ops::RangeInclusive<T>> for NonZeroRange<T>
+impl<T: PartialOrd + Add<Output = T> + One> TryFrom<std::ops::RangeInclusive<T>>
+    for NonZeroRange<T>
 {
     type Error = RangeZeroLenghtError<RangeInclusive<T>>;
 
@@ -186,9 +187,7 @@ impl<T> From<Range<T>> for RangeUnchecked<T> {
     }
 }
 
-impl<T: num_traits::One + std::ops::Sub<Output = T> + std::ops::Add<Output = T>>
-    From<RangeInclusive<T>> for RangeUnchecked<T>
-{
+impl<T: One + Sub<Output = T> + Add<Output = T>> From<RangeInclusive<T>> for RangeUnchecked<T> {
     fn from(value: RangeInclusive<T>) -> Self {
         let (start, end) = value.into_inner();
         RangeUnchecked {
@@ -209,7 +208,7 @@ impl<T> NonZeroRange<T> {
     }
 }
 
-impl<T: PartialOrd + Debug> NonZeroRange<T> {
+impl<T: PartialOrd + Ord + Copy + Debug + Bounded> NonZeroRange<T> {
     pub fn new(into_range: impl Into<RangeUnchecked<T>>) -> Self {
         let r = Self(into_range.into());
         assert!(
@@ -233,6 +232,15 @@ impl<T: PartialOrd + Debug> NonZeroRange<T> {
 
     pub fn overlaps(&self, other: &Self) -> bool {
         self.start < other.end && other.start < self.end
+    }
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        let start = max(self.start, other.start);
+        let end = min(self.end, other.end);
+        if end > start {
+            Some(unsafe { Self::new_unchecked(RangeUnchecked { start, end }) })
+        } else {
+            None
+        }
     }
 }
 impl<T> NonZeroRange<T>
@@ -331,5 +339,55 @@ mod tests {
         assert_eq!(expected, unsafe {
             NonZeroRange::new_unchecked(b).overlaps(&NonZeroRange::new_unchecked(a))
         });
+    }
+
+    #[test]
+    fn intersection_no_overlap_before() {
+        test_intersection_both_ways(0..2, 3..5, None);
+    }
+
+    #[test]
+    fn intersection_adjacent() {
+        test_intersection_both_ways(0..5, 5..10, None);
+    }
+
+    #[test]
+    fn intersection_overlaping_start() {
+        test_intersection_both_ways(0..5, 3..7, Some(3..5));
+    }
+
+    #[test]
+    fn intersection_one_inside_other() {
+        test_intersection_both_ways(2..4, 1..5, Some(2..4));
+    }
+
+    #[test]
+    fn intersection_same_ranges() {
+        test_intersection_both_ways(3..7, 3..7, Some(3..7));
+    }
+
+    #[test]
+    fn intersection_overlapping_end() {
+        test_intersection_both_ways(3..7, 0..4, Some(3..4));
+    }
+
+    fn test_intersection_both_ways(a: Range<u32>, b: Range<u32>, expected: Option<Range<u32>>) {
+        let a_nz = unsafe { NonZeroRange::new_unchecked(a.clone()) };
+        let b_nz = unsafe { NonZeroRange::new_unchecked(b.clone()) };
+
+        let result_ab = a_nz.intersection(&b_nz);
+        let result_ba = b_nz.intersection(&a_nz);
+
+        match expected {
+            Some(exp) => {
+                let exp_nz = unsafe { NonZeroRange::new_unchecked(exp) };
+                assert_eq!(result_ab, Some(exp_nz), "a intersection b");
+                assert_eq!(result_ba, Some(exp_nz), "b intersection a");
+            }
+            None => {
+                assert_eq!(result_ab, None, "a intersection b");
+                assert_eq!(result_ba, None, "b intersection a");
+            }
+        }
     }
 }
