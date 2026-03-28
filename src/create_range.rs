@@ -12,12 +12,12 @@ pub trait CreateRange: Sized {
 }
 
 impl<
-        T: SignedNonZeroable
-            + Copy
-            + num_traits::One
-            + std::ops::Sub<Output = T>
-            + std::ops::Add<Output = T>,
-    > CreateRange for std::ops::RangeInclusive<T>
+    T: SignedNonZeroable
+        + Copy
+        + num_traits::One
+        + std::ops::Sub<Output = T>
+        + std::ops::Add<Output = T>,
+> CreateRange for std::ops::RangeInclusive<T>
 {
     type Item = T;
     type ListItem<TMeta> = (Self, TMeta);

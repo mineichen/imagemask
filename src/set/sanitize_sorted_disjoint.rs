@@ -264,7 +264,6 @@ mod tests {
         not(debug_assertions),
         should_panic(expected = "Panic after wrong item")
     )]
-
     fn range_with_end_bigger_start_single() {
         SanitizeSortedDisjoint::new([10u32..=9]).next();
         panic!("Panic after wrong item");

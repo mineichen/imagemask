@@ -24,6 +24,7 @@ pin-project-lite = { version = "0.2", optional = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "io-util"] }
 futures-util = "0.3"
+testresult = "0.4"
 
 [features]
 #default = ["range-set-blaze-0_5", "rkyv", "async-io"]

@@ -4,11 +4,12 @@ use std::{
     ops::{Add, Div, Range, Rem, Sub},
 };
 
-use crate::{CreateRange, NonZeroRange, SignedNonZeroable, UncheckedCast};
-use num_traits::{One, Zero};
+use crate::{CreateRange, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
+use num_traits::One;
 
 mod bounds_inspector;
 mod chunk_by_row;
+mod clip_2d;
 mod iter;
 mod map_inplace;
 mod offsets_iter;
@@ -17,6 +18,7 @@ mod sanitize_sorted_disjoint;
 
 pub use bounds_inspector::*;
 pub use chunk_by_row::*;
+pub use clip_2d::*;
 pub use iter::*;
 pub use map_inplace::*;
 pub use offsets_iter::*;
@@ -46,6 +48,20 @@ pub trait ImaskSet: Iterator + Sized {
             + Sub<Output = R::Item>
             + Rem<Output = R::Item>
             + Div<Output = R::Item>;
+
+    fn try_clip_2d(
+        self,
+        roi: Rect<<Self::Item as CreateRange>::Item>,
+        orig_width: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
+    ) -> Result<
+        Clip2dIter<Self, Self::Item>,
+        RoiWidthExceedsOriginal<<Self::Item as CreateRange>::Item>,
+    >
+    where
+        Self::Item: CreateRange<Item: Copy + Ord + Add<Output = <Self::Item as CreateRange>::Item>>,
+    {
+        Clip2dIter::try_new(self, roi, orig_width)
+    }
 }
 
 impl<I: Iterator> ImaskSet for I {
