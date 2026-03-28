@@ -326,6 +326,132 @@ mod tests {
         assert_eq!(err.total, 13);
     }
 
+    #[test]
+    fn multiple_disjoint_ranges() -> TestResult {
+        let roi = Rect::new(
+            2usize,
+            0,
+            NonZeroUsize::new(3).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        );
+        let source = [2..5usize, 12..15, 22..25];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![0..3, 3..6]);
+        Ok(())
+    }
+
+    #[test]
+    fn range_spanning_multiple_rows() -> TestResult {
+        let roi = Rect::new(
+            0usize,
+            1,
+            NonZeroUsize::new(10).unwrap(),
+            NonZeroUsize::new(3).unwrap(),
+        );
+        let source = [5..35usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![0..25]);
+        Ok(())
+    }
+
+    #[test]
+    fn range_partially_inside_roi_left() -> TestResult {
+        let roi = Rect::new(
+            5usize,
+            0,
+            NonZeroUsize::new(5).unwrap(),
+            NonZeroUsize::new(1).unwrap(),
+        );
+        let source = [2..8usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![0..3]);
+        Ok(())
+    }
+
+    #[test]
+    fn range_partially_inside_roi_right() -> TestResult {
+        let roi = Rect::new(
+            2usize,
+            0,
+            NonZeroUsize::new(5).unwrap(),
+            NonZeroUsize::new(1).unwrap(),
+        );
+        let source = [5..12usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![3..5]);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_iterator() -> TestResult {
+        let roi = Rect::new(0usize, 0, OUTER_W, NonZeroUsize::new(1).unwrap());
+        let result: Vec<_> = std::iter::empty::<Range<usize>>()
+            .try_clip_2d(roi, OUTER_W)?
+            .collect();
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn roi_at_origin() -> TestResult {
+        let roi = Rect::new(
+            0usize,
+            0,
+            NonZeroUsize::new(5).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        );
+        let source = [0..20usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![0..10]);
+        Ok(())
+    }
+
+    #[test]
+    fn roi_exactly_image_bounds() -> TestResult {
+        let roi = Rect::new(0usize, 0, OUTER_W, NonZeroUsize::new(3).unwrap());
+        let source = [0..30usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![0..30]);
+        Ok(())
+    }
+
+    #[test]
+    fn ranges_before_and_after_roi() -> TestResult {
+        let roi = Rect::new(0usize, 1, OUTER_W, NonZeroUsize::new(1).unwrap());
+        let source = [0..5usize, 20..25];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn single_pixel_at_roi_corner() -> TestResult {
+        let roi = Rect::new(
+            5usize,
+            2,
+            NonZeroUsize::new(3).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        );
+        let source = [27..28usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![2..3]);
+        Ok(())
+    }
+
+    #[test]
+    fn range_clipped_to_single_pixel() -> TestResult {
+        let roi = Rect::new(
+            9usize,
+            0,
+            NonZeroUsize::new(1).unwrap(),
+            NonZeroUsize::new(1).unwrap(),
+        );
+        let source = [8..12usize];
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        assert_eq!(result, vec![0..1]);
+        Ok(())
+    }
+
     // Not yet supported... Might not be worth because of the performance penalty for storing pending items
     // This could be implemented zero-cost, if width is a interna of the iterators (we'd just decrement width until x+new_width = old_width)
     // #[test]
