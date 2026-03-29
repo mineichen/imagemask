@@ -15,6 +15,7 @@ mod map_inplace;
 mod offsets_iter;
 mod rect;
 mod sanitize_sorted_disjoint;
+mod split_rows;
 
 pub use bounds_inspector::*;
 pub use chunk_by_row::*;
@@ -24,47 +25,11 @@ pub use map_inplace::*;
 pub use offsets_iter::*;
 pub use rect::*;
 pub use sanitize_sorted_disjoint::*;
+pub use split_rows::*;
 
 pub trait ImaskSet: Iterator + Sized {
     /// # Panics
     /// If the previous RowIterator is kept when getting the next RowIterator
-    fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
-        self,
-        old_image_width: <R::Item as SignedNonZeroable>::NonZero,
-    ) -> ChunkByRowRanges<Self, R>;
-
-    fn inspect_bounds<R>(
-        self,
-        image_width: <R::Item as SignedNonZeroable>::NonZero,
-    ) -> BoundsInspector<Self, R>
-    where
-        R: CreateRange<Item: SignedNonZeroable>,
-        R::Item: num_traits::Bounded
-            + Copy
-            + Ord
-            + num_traits::Zero
-            + One
-            + Add<Output = R::Item>
-            + Sub<Output = R::Item>
-            + Rem<Output = R::Item>
-            + Div<Output = R::Item>;
-
-    fn try_clip_2d(
-        self,
-        roi: Rect<<Self::Item as CreateRange>::Item>,
-        orig_width: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
-    ) -> Result<
-        Clip2dIter<Self, Self::Item>,
-        RoiWidthExceedsOriginal<<Self::Item as CreateRange>::Item>,
-    >
-    where
-        Self::Item: CreateRange<Item: Copy + Ord + Add<Output = <Self::Item as CreateRange>::Item>>,
-    {
-        Clip2dIter::try_new(self, roi, orig_width)
-    }
-}
-
-impl<I: Iterator> ImaskSet for I {
     fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
         self,
         old_image_width: <R::Item as SignedNonZeroable>::NonZero,
@@ -90,7 +55,40 @@ impl<I: Iterator> ImaskSet for I {
     {
         BoundsInspector::new(self, image_width)
     }
+
+    fn try_clip_2d(
+        self,
+        roi: Rect<<Self::Item as CreateRange>::Item>,
+        orig_width: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
+    ) -> Result<
+        Clip2dIter<Self, Self::Item>,
+        RoiWidthExceedsOriginal<<Self::Item as CreateRange>::Item>,
+    >
+    where
+        Self::Item: CreateRange<Item: Copy + Ord + Add<Output = <Self::Item as CreateRange>::Item>>,
+    {
+        Clip2dIter::try_new(self, roi, orig_width)
+    }
+
+    fn split_rows(
+        self,
+        width: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
+    ) -> SplitRowsIter<Self, Self::Item>
+    where
+        Self::Item: CreateRange<
+            Item: Copy
+                      + Ord
+                      + std::ops::Sub<Output = <Self::Item as CreateRange>::Item>
+                      + std::ops::Add<Output = <Self::Item as CreateRange>::Item>
+                      + std::ops::Mul<Output = <Self::Item as CreateRange>::Item>
+                      + std::ops::Div<Output = <Self::Item as CreateRange>::Item>,
+        >,
+    {
+        SplitRowsIter::new(self, width)
+    }
 }
+
+impl<I: Iterator> ImaskSet for I {}
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
