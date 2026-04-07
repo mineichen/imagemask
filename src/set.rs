@@ -10,6 +10,8 @@ use num_traits::One;
 mod bounds_inspector;
 mod chunk_by_row;
 mod clip_2d;
+#[cfg(feature = "async-io")]
+mod future;
 mod iter;
 mod map_inplace;
 mod offsets_iter;
@@ -110,6 +112,65 @@ impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
             .finish()
     }
 }
+struct Builder<TIncluded, TExcluded> {
+    cur_pos: u64,
+    included: Vec<TIncluded>,
+    excluded: Vec<TExcluded>,
+}
+
+impl<TIncluded, TExcluded> Builder<TIncluded, TExcluded>
+where
+    TIncluded: TryFrom<u64, Error: Display>,
+    TExcluded: TryFrom<u64, Error: Display>,
+{
+    fn new<TRange: CreateRange<Item: TryInto<u64, Error: Display>>>(
+        first_range: TRange,
+        size_hint: usize,
+    ) -> Result<Self, String> {
+        // Process first outside the loop, to have start > last_end (wrong for ranges which start with 0)
+        let (start_u64, end_u64) = (
+            first_range.start().try_into().map_err(|x| x.to_string())?,
+            first_range.end().try_into().map_err(|x| x.to_string())?,
+        );
+        let first_len = create_checked(start_u64, end_u64)?;
+        let initial_offset = TExcluded::try_from(start_u64).map_err(|e| e.to_string())?;
+        let mut included = Vec::<TIncluded>::with_capacity(size_hint);
+        let mut excluded = Vec::<TExcluded>::with_capacity(size_hint);
+        included.push(first_len);
+        excluded.push(initial_offset);
+        Ok(Self {
+            included,
+            excluded,
+            cur_pos: end_u64,
+        })
+    }
+
+    fn add<TRange: CreateRange<Item: TryInto<u64, Error: Display>>>(
+        &mut self,
+        range: TRange,
+    ) -> Result<(), String> {
+        let (start_u64, end_u64) = (
+            range.start().try_into().map_err(|x| x.to_string())?,
+            range.end().try_into().map_err(|x| x.to_string())?,
+        );
+        self.excluded.push(create_checked(self.cur_pos, start_u64)?);
+        self.included.push(create_checked(start_u64, end_u64)?);
+        self.cur_pos = end_u64;
+        Ok(())
+    }
+    fn build(self) -> SortedRanges<TIncluded, TExcluded> {
+        SortedRanges {
+            included: self.included,
+            excluded: self.excluded,
+        }
+    }
+}
+fn create_checked<T: TryFrom<u64, Error: Display>>(start: u64, end: u64) -> Result<T, String> {
+    if end <= start {
+        return Err(format!("{} must be > {}", end, start));
+    }
+    T::try_from(end - start).map_err(|e| e.to_string())
+}
 
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     pub fn new<TRange>(r: NonZeroRange<TRange>) -> Self
@@ -123,48 +184,23 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
 
-    pub fn try_from_ordered_iter<T>(
-        iter: impl IntoIterator<Item = T>,
-    ) -> Result<Self, String>
+    pub fn try_from_ordered_iter<TIter>(iter: TIter) -> Result<Self, String>
     where
-        T: CreateRange,
-        T::Item: UncheckedCast<u64>,
+        TIter: IntoIterator<Item: CreateRange<Item: TryInto<u64, Error: Display>>>,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
-        fn create_checked<T: TryFrom<u64, Error: Display>>(
-            start: u64,
-            end: u64,
-        ) -> Result<T, String> {
-            if end <= start {
-                return Err(format!("{} must be > {}", end, start));
-            }
-            T::try_from(end - start).map_err(|e| e.to_string())
-        }
-
-        let mut iter = iter.into_iter().map(|range| {
-            let start = range.start().cast_unchecked();
-            let end = range.end().cast_unchecked();
-            create_checked::<TIncluded>(start, end).map(|x| (start..end, x))
-        });
-        let Some((first_range, first_len)) = iter.next().transpose()? else {
+        let mut iter = iter.into_iter();
+        let Some(first_range) = iter.next() else {
             return Err("Requires at least one item".into());
         };
-        let initial_offset = TExcluded::try_from(first_range.start).map_err(|e| e.to_string())?;
-        let mut included = Vec::<TIncluded>::with_capacity(iter.size_hint().0 + 1);
-        let mut excluded = Vec::<TExcluded>::with_capacity(iter.size_hint().0 + 1);
+        let mut builder = Builder::new(first_range, iter.size_hint().0 + 1)?;
 
-        included.push(first_len);
-        excluded.push(initial_offset);
-        let mut cur_pos = first_range.end;
         for x in iter {
-            let (next_range, next_len) = x?;
-            excluded.push(create_checked(cur_pos, next_range.start)?);
-            included.push(next_len);
-            cur_pos = next_range.end;
+            builder.add(x)?;
         }
 
-        Ok(Self { included, excluded })
+        Ok(builder.build())
     }
 
     #[allow(clippy::len_without_is_empty, reason = "Cannot be empty")]
