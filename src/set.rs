@@ -1,7 +1,7 @@
 use std::{
     fmt::{Debug, Display},
     num::NonZero,
-    ops::{Add, Div, Range, Rem, Sub},
+    ops::{Add, Div, Rem, Sub},
 };
 
 use crate::{CreateRange, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
@@ -123,11 +123,12 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
 
-    pub fn try_from_ordered_iter<TRange>(
-        iter: impl IntoIterator<Item = Range<TRange>>,
+    pub fn try_from_ordered_iter<T>(
+        iter: impl IntoIterator<Item = T>,
     ) -> Result<Self, String>
     where
-        TRange: Into<u64>,
+        T: CreateRange,
+        T::Item: UncheckedCast<u64>,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
@@ -142,8 +143,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
 
         let mut iter = iter.into_iter().map(|range| {
-            let start = range.start.into();
-            let end = range.end.into();
+            let start = range.start().cast_unchecked();
+            let end = range.end().cast_unchecked();
             create_checked::<TIncluded>(start, end).map(|x| (start..end, x))
         });
         let Some((first_range, first_len)) = iter.next().transpose()? else {
@@ -227,7 +228,7 @@ impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>> IntoIterator
 
 #[cfg(test)]
 mod tests {
-    use std::ops::RangeInclusive;
+    use std::ops::{Range, RangeInclusive};
 
     use super::*;
 
