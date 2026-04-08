@@ -1,4 +1,4 @@
-use std::{iter::FusedIterator, marker::PhantomData};
+use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData};
 
 use num_traits::{One, Zero};
 
@@ -20,9 +20,9 @@ pub struct Clip2dIter<T: Iterator, R: CreateRange> {
     _range: PhantomData<R>,
 }
 
-impl<T: Iterator, R: CreateRange<Item: std::fmt::Debug>> std::fmt::Debug for Clip2dIter<T, R>
+impl<T: Iterator, R: CreateRange<Item: Debug>> Debug for Clip2dIter<T, R>
 where
-    <R::Item as SignedNonZeroable>::NonZero: std::fmt::Debug,
+    <R::Item as SignedNonZeroable>::NonZero: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Clip2dIter")

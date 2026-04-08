@@ -207,6 +207,13 @@ impl<W: AsyncWrite, S: futures_core::Stream<Item = RangeInclusive<u64>>> Future
                 }
                 WriterState::Closing => {
                     ready!(this.writer.as_mut().poll_close(cx))?;
+                    if *this.last_end == 0 {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Expected at least 1 range",
+                        )
+                        .into()));
+                    }
                     *this.state = WriterState::Done;
                 }
                 WriterState::Done => {
@@ -327,10 +334,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_error() {
+    async fn read_empty_error() {
         let reader = AsyncRangeStream::new(&[][..]);
         let result = reader.try_collect::<Vec<_>>().await;
         assert!(matches!(result, Err(ProtocolError::UnexpectedEof)));
+    }
+
+    #[tokio::test]
+    async fn write_empty_error() {
+        let input: [RangeInclusive<u64>; 0] = [];
+        let writer = Vec::new();
+        let _err = AsyncRangeWriter::new(writer, futures_util::stream::iter(input))
+            .await
+            .unwrap_err();
     }
 
     #[tokio::test]
@@ -479,18 +495,6 @@ mod tests {
         let reader = AsyncRangeStream::new(FailingReader);
         let result = reader.try_collect::<Vec<_>>().await;
         assert!(matches!(result, Err(ProtocolError::Io(_))));
-    }
-
-    #[tokio::test]
-    async fn writer_empty_stream() {
-        let mut buf = Vec::new();
-        let ranges: Vec<RangeInclusive<u64>> = vec![];
-        let writer = AsyncRangeWriter::new(&mut buf, futures_util::stream::iter(ranges));
-        writer.await.unwrap();
-        assert_eq!(buf.len(), Header::SIZE);
-        let reader = AsyncRangeStream::new(&buf[..]);
-        let result: Vec<_> = reader.try_collect().await.unwrap();
-        assert!(result.is_empty());
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, io};
 
 use futures_core::Stream;
 
@@ -11,7 +11,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         stream: TStream,
     ) -> TryFromOrderedStreamFuture<TStream, TIncluded, TExcluded>
     where
-        TStream: Stream<Item = std::io::Result<T>>,
+        TStream: Stream<Item = io::Result<T>>,
         T: CreateRange<Item: TryInto<u64, Error: Display>>,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
@@ -29,14 +29,15 @@ pin_project_lite::pin_project!(
         builder: Option<Builder<TIncluded, TExcluded>>,
     }
 );
-impl<S: Stream<Item = std::io::Result<T>>, T, TIncluded, TExcluded> std::future::Future
+impl<S, T, TIncluded, TExcluded> std::future::Future
     for TryFromOrderedStreamFuture<S, TIncluded, TExcluded>
 where
+    S: Stream<Item = io::Result<T>>,
+    T: CreateRange<Item: TryInto<u64, Error: Display>>,
     TIncluded: TryFrom<u64, Error: Display>,
     TExcluded: TryFrom<u64, Error: Display>,
-    T: CreateRange<Item: TryInto<u64, Error: Display>>,
 {
-    type Output = Result<SortedRanges<TIncluded, TExcluded>, String>;
+    type Output = std::io::Result<SortedRanges<TIncluded, TExcluded>>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -50,8 +51,13 @@ where
                     Ok(x) => *this.builder = Some(x),
                     Err(e) => return std::task::Poll::Ready(Err(e)),
                 },
-                Some(Err(e)) => return std::task::Poll::Ready(Err(e.to_string())),
-                None => return std::task::Poll::Ready(Err("Requires at least one item".into())),
+                Some(Err(e)) => return std::task::Poll::Ready(Err(e)),
+                None => {
+                    return std::task::Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Requires at least one item",
+                    )));
+                }
             }
         };
         loop {
@@ -65,7 +71,7 @@ where
                         return std::task::Poll::Ready(Err(e));
                     }
                 }
-                Some(Err(e)) => return std::task::Poll::Ready(Err(e.to_string())),
+                Some(Err(e)) => return std::task::Poll::Ready(Err(e)),
                 None => return std::task::Poll::Ready(Ok(this.builder.take().unwrap().build())),
             }
         }

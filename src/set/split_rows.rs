@@ -1,4 +1,4 @@
-use std::{iter::FusedIterator, marker::PhantomData};
+use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData};
 
 use crate::{CreateRange, SignedNonZeroable};
 
@@ -20,9 +20,9 @@ impl<T: Iterator, R: CreateRange> SplitRowsIter<T, R> {
     }
 }
 
-impl<T: Iterator, R: CreateRange<Item: std::fmt::Debug>> std::fmt::Debug for SplitRowsIter<T, R>
+impl<T: Iterator, R: CreateRange<Item: Debug>> Debug for SplitRowsIter<T, R>
 where
-    <R::Item as SignedNonZeroable>::NonZero: std::fmt::Debug,
+    <R::Item as SignedNonZeroable>::NonZero: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SplitRowsIter")

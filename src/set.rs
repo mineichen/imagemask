@@ -1,9 +1,13 @@
 use std::{
     fmt::{Debug, Display},
+    io,
     num::NonZero,
     ops::{Add, Div, Rem, Sub},
 };
 
+fn invalid_data<T: Display>(e: T) -> std::io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+}
 use crate::{CreateRange, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
 use num_traits::One;
 
@@ -123,17 +127,16 @@ where
     TIncluded: TryFrom<u64, Error: Display>,
     TExcluded: TryFrom<u64, Error: Display>,
 {
-    fn new<TRange: CreateRange<Item: TryInto<u64, Error: Display>>>(
-        first_range: TRange,
-        size_hint: usize,
-    ) -> Result<Self, String> {
-        // Process first outside the loop, to have start > last_end (wrong for ranges which start with 0)
+    fn new<TRange>(first_range: TRange, size_hint: usize) -> Result<Self, io::Error>
+    where
+        TRange: CreateRange<Item: TryInto<u64, Error: Display>>,
+    {
         let (start_u64, end_u64) = (
-            first_range.start().try_into().map_err(|x| x.to_string())?,
-            first_range.end().try_into().map_err(|x| x.to_string())?,
+            first_range.start().try_into().map_err(invalid_data)?,
+            first_range.end().try_into().map_err(invalid_data)?,
         );
         let first_len = create_checked(start_u64, end_u64)?;
-        let initial_offset = TExcluded::try_from(start_u64).map_err(|e| e.to_string())?;
+        let initial_offset = TExcluded::try_from(start_u64).map_err(invalid_data)?;
         let mut included = Vec::<TIncluded>::with_capacity(size_hint);
         let mut excluded = Vec::<TExcluded>::with_capacity(size_hint);
         included.push(first_len);
@@ -145,13 +148,13 @@ where
         })
     }
 
-    fn add<TRange: CreateRange<Item: TryInto<u64, Error: Display>>>(
-        &mut self,
-        range: TRange,
-    ) -> Result<(), String> {
+    fn add<TRange>(&mut self, range: TRange) -> Result<(), io::Error>
+    where
+        TRange: CreateRange<Item: TryInto<u64, Error: Display>>,
+    {
         let (start_u64, end_u64) = (
-            range.start().try_into().map_err(|x| x.to_string())?,
-            range.end().try_into().map_err(|x| x.to_string())?,
+            range.start().try_into().map_err(invalid_data)?,
+            range.end().try_into().map_err(invalid_data)?,
         );
         self.excluded.push(create_checked(self.cur_pos, start_u64)?);
         self.included.push(create_checked(start_u64, end_u64)?);
@@ -165,11 +168,17 @@ where
         }
     }
 }
-fn create_checked<T: TryFrom<u64, Error: Display>>(start: u64, end: u64) -> Result<T, String> {
+fn create_checked<T>(start: u64, end: u64) -> Result<T, io::Error>
+where
+    T: TryFrom<u64, Error: Display>,
+{
     if end <= start {
-        return Err(format!("{} must be > {}", end, start));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("end ({end}) must be > start ({start})"),
+        ));
     }
-    T::try_from(end - start).map_err(|e| e.to_string())
+    T::try_from(end - start).map_err(invalid_data)
 }
 
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
@@ -184,7 +193,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
 
-    pub fn try_from_ordered_iter<TIter>(iter: TIter) -> Result<Self, String>
+    pub fn try_from_ordered_iter<TIter>(iter: TIter) -> Result<Self, io::Error>
     where
         TIter: IntoIterator<Item: CreateRange<Item: TryInto<u64, Error: Display>>>,
         TIncluded: TryFrom<u64, Error: Display>,
@@ -192,7 +201,10 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     {
         let mut iter = iter.into_iter();
         let Some(first_range) = iter.next() else {
-            return Err("Requires at least one item".into());
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Requires at least one item",
+            ));
         };
         let mut builder = Builder::new(first_range, iter.size_hint().0 + 1)?;
 
@@ -350,24 +362,24 @@ mod tests {
     fn assert_big_gap_causes_error() {
         let error =
             SortedRanges::<u16, u8>::try_from_ordered_iter([10u32..20, 276..280]).unwrap_err();
-        assert!(error.contains("out of range"), "{error}");
+        assert!(error.to_string().contains("out of range"), "{error}");
     }
 
     #[test]
     fn assert_big_ranges_cause_error() {
         let error = SortedRanges::<u8, u16>::try_from_ordered_iter([10u32..280]).unwrap_err();
-        assert!(error.contains("out of range"), "{error}");
+        assert!(error.to_string().contains("out of range"), "{error}");
     }
     #[test]
     fn zero_ranges_cause_error() {
         let error = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..10]).unwrap_err();
-        assert!(error.contains("> 10"), "{error}");
+        assert!(error.to_string().contains("must be >"), "{error}");
     }
 
     #[test]
     fn overlapping_cause_error() {
         let error = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..12, 11..12]).unwrap_err();
-        assert!(error.contains("> 12"), "{error}");
+        assert!(error.to_string().contains("must be >"), "{error}");
     }
 
     #[test]
