@@ -890,10 +890,11 @@ mod tests {
 
     #[tokio::test]
     async fn reader_roi_forwarded_to_writer() -> TestResult {
-        use crate::SortedRanges;
+        use crate::{Rect, SortedRanges};
 
+        let bounds = Rect::new(0u32, 0, NONZERO_1000, NONZERO_1000);
         let sorted =
-            SortedRanges::<u64, u64>::try_from_ordered_iter([10u64..20, 30..40, 1050..1060])
+            SortedRanges::<u64, u64>::try_from_ordered_iter([10u64..20, 30..40, 1050..1060], bounds)
                 .unwrap();
         let expected: Vec<_> = sorted.iter::<NonZeroRange<u64>>().collect();
 

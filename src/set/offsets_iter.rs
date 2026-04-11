@@ -1,4 +1,6 @@
-use std::{any::type_name, fmt::Debug, ops::RangeInclusive};
+use std::{any::type_name, fmt::Debug, num::NonZero, ops::RangeInclusive};
+
+use crate::ImageDimension;
 
 pub struct RangeToOffsetsIter<TIter, TIncluded, TExcluded> {
     iter: TIter,
@@ -50,5 +52,14 @@ where
             );
         });
         Some((excluded, included))
+    }
+}
+
+impl<TIter, TIncluded, TExcluded> ImageDimension for RangeToOffsetsIter<TIter, TIncluded, TExcluded>
+where
+    TIter: ImageDimension,
+{
+    fn width(&self) -> NonZero<u32> {
+        self.iter.width()
     }
 }

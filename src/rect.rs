@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use crate::{CreateRange, NonZeroRange, RectIterator, SignedNonZeroable};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
 pub struct Rect<T: SignedNonZeroable> {
     pub x: T,
     pub y: T,
@@ -25,7 +26,7 @@ where
 }
 
 impl<T: SignedNonZeroable> Rect<T> {
-    pub fn new(x: T, y: T, width: T::NonZero, height: T::NonZero) -> Self {
+    pub const fn new(x: T, y: T, width: T::NonZero, height: T::NonZero) -> Self {
         Self {
             x,
             y,

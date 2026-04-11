@@ -1,4 +1,6 @@
-use std::{fmt::Debug, iter::FusedIterator, ops::RangeInclusive};
+use std::{fmt::Debug, iter::FusedIterator, num::NonZero, ops::RangeInclusive};
+
+use crate::ImageDimension;
 
 /// Sanitize a SortedStarts into a disjoint iterator of ranges. Iteration stops when error is detected.
 /// It will merge adjacent ranges but fail, if a item with a smaller start than the current accumulator.start is found, as this could mean, that the output would not be sorted.
@@ -164,6 +166,15 @@ where
 impl<I, T: Debug + num_traits::Unsigned + Ord + Copy> FusedIterator for SanitizeSortedDisjoint<I, T> where
     I: FusedIterator<Item = RangeInclusive<T>>
 {
+}
+
+impl<I, T: Debug> ImageDimension for SanitizeSortedDisjoint<I, T>
+where
+    I: crate::ImageDimension,
+{
+    fn width(&self) -> NonZero<u32> {
+        self.iter.width()
+    }
 }
 
 #[cfg(feature = "range-set-blaze-0_5")]

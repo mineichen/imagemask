@@ -3,7 +3,7 @@ use std::{
     ops::RangeInclusive, rc::Rc,
 };
 
-use crate::{CreateRange, RangeToOffsetsIter, SortedRanges, UncheckedCast};
+use crate::{CreateRange, ImageDimension, RangeToOffsetsIter, SortedRanges, UncheckedCast};
 
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// Transform the ranges in-place using a closure.
@@ -11,10 +11,12 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// Returns Some(SortedRanges) if non-empty, None if empty.
     /// ```
     /// use std::ops::RangeInclusive;
-    /// use imask::{SortedRanges, SourceIterator};
+    /// use imask::{Rect, SortedRanges, SourceIterator};
+    /// use std::num::NonZero;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60])?;
+    /// let bounds = Rect::new(0u32, 0, NonZero::new(1000u32).unwrap(), NonZero::new(1000u32).unwrap());
+    /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60], bounds)?;
     /// let ranges = ranges.map_inplace(|iter| {
     ///     iter.map(|x| {
     ///         let (start, end) = x.into_inner();
@@ -106,6 +108,12 @@ where
     TIncluded: UncheckedCast<u64>,
     TExcluded: UncheckedCast<u64>,
 {
+}
+
+impl<TIncluded, TExcluded> ImageDimension for SourceIterator<TIncluded, TExcluded> {
+    fn width(&self) -> NonZero<u32> {
+        self.cell.borrow().0.bounds.width
+    }
 }
 
 impl<TIncluded, TExcluded> Iterator for SourceIterator<TIncluded, TExcluded>

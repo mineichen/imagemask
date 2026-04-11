@@ -8,7 +8,7 @@ use std::{
 fn invalid_data<T: Display>(e: T) -> std::io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e.to_string())
 }
-use crate::{CreateRange, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
+use crate::{CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
 use num_traits::One;
 
 mod bounds_inspector;
@@ -64,14 +64,12 @@ pub trait ImaskSet: Iterator + Sized {
 
     fn try_clip_2d(
         self,
-        roi: Rect<<Self::Item as CreateRange>::Item>,
-        orig_width: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
-    ) -> Result<
-        Clip2dIter<Self, Self::Item>,
-        RoiWidthExceedsOriginal<<Self::Item as CreateRange>::Item>,
-    >
+        roi: Rect<u32>,
+        orig_width: NonZero<u32>,
+    ) -> Result<Clip2dIter<Self, Self::Item>, RoiWidthExceedsOriginal>
     where
         Self::Item: CreateRange<Item: Copy + Ord + Add<Output = <Self::Item as CreateRange>::Item>>,
+        u32: UncheckedCast<<Self::Item as CreateRange>::Item>,
     {
         Clip2dIter::try_new(self, roi, orig_width)
     }
@@ -108,6 +106,7 @@ impl<I: Iterator> ImaskSet for I {}
 pub struct SortedRanges<TIncluded, TExcluded> {
     included: Vec<TIncluded>,
     excluded: Vec<TExcluded>,
+    bounds: Rect<u32>,
 }
 impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -161,10 +160,11 @@ where
         self.cur_pos = end_u64;
         Ok(())
     }
-    fn build(self) -> SortedRanges<TIncluded, TExcluded> {
+    fn build(self, bounds: Rect<u32>) -> SortedRanges<TIncluded, TExcluded> {
         SortedRanges {
             included: self.included,
             excluded: self.excluded,
+            bounds,
         }
     }
 }
@@ -182,23 +182,28 @@ where
 }
 
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
-    pub fn new<TRange>(r: NonZeroRange<TRange>) -> Self
+    pub fn new<TRange>(r: NonZeroRange<TRange>, bounds: Rect<u32>) -> Self
     where
         TRange: UncheckedCast<TIncluded> + UncheckedCast<TExcluded> + Sub<Output = TRange>,
         TIncluded: TryFrom<u64>,
     {
+        assert!(bounds.x == 0);
+        assert!(bounds.y == 0);
         Self {
             included: vec![r.len().cast_unchecked()],
             excluded: vec![r.start.cast_unchecked()],
+            bounds,
         }
     }
 
-    pub fn try_from_ordered_iter<TIter>(iter: TIter) -> Result<Self, io::Error>
+    pub fn try_from_ordered_iter<TIter>(iter: TIter, bounds: Rect<u32>) -> Result<Self, io::Error>
     where
         TIter: IntoIterator<Item: CreateRange<Item: TryInto<u64, Error: Display>>>,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
+        assert!(bounds.x == 0);
+        assert!(bounds.y == 0);
         let mut iter = iter.into_iter();
         let Some(first_range) = iter.next() else {
             return Err(io::Error::new(
@@ -212,7 +217,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             builder.add(x)?;
         }
 
-        Ok(builder.build())
+        Ok(builder.build(bounds))
     }
 
     #[allow(clippy::len_without_is_empty, reason = "Cannot be empty")]
@@ -241,6 +246,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.included.iter().copied(),
             self.excluded.iter().copied(),
             T::Item::default(),
+            self.bounds,
         )
     }
     pub fn iter_owned<T: CreateRange>(
@@ -255,7 +261,14 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.included.into_iter(),
             self.excluded.into_iter(),
             T::Item::default(),
+            self.bounds,
         )
+    }
+}
+
+impl<TIncluded, TExcluded> ImageDimension for SortedRanges<TIncluded, TExcluded> {
+    fn width(&self) -> NonZero<u32> {
+        self.bounds.width
     }
 }
 
@@ -270,7 +283,12 @@ impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>> IntoIterator
     >;
 
     fn into_iter(self) -> Self::IntoIter {
-        SortedRangesIter::new(self.included.into_iter(), self.excluded.into_iter(), 0u64)
+        SortedRangesIter::new(
+            self.included.into_iter(),
+            self.excluded.into_iter(),
+            0u64,
+            self.bounds,
+        )
     }
 }
 
@@ -280,13 +298,22 @@ mod tests {
 
     use super::*;
 
+    const TEST_BOUNDS: Rect<u32> = Rect::new(
+        0,
+        0,
+        NonZero::new(1000u32).unwrap(),
+        NonZero::new(1000u32).unwrap(),
+    );
+
     #[cfg(feature = "range-set-blaze-0_5")]
     #[test]
     fn combine_inline() {
         use range_set_blaze_0_5::SortedDisjoint;
 
-        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 30..40]).unwrap();
-        let b = SortedRanges::<u8, u8>::try_from_ordered_iter([20u32..30, 41..45]).unwrap();
+        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 30..40], TEST_BOUNDS)
+            .unwrap();
+        let b = SortedRanges::<u8, u8>::try_from_ordered_iter([20u32..30, 41..45], TEST_BOUNDS)
+            .unwrap();
 
         let b_iter = b.iter::<RangeInclusive<u64>>();
         let a = a.map_inplace(|a_iter| b_iter.union(a_iter)).unwrap();
@@ -297,7 +324,7 @@ mod tests {
 
     #[test]
     fn ranges_starting_at_zero() {
-        let map = SortedRanges::<u32, u32>::try_from_ordered_iter([0u64..1, 5u64..6]);
+        let map = SortedRanges::<u32, u32>::try_from_ordered_iter([0u64..1, 5u64..6], TEST_BOUNDS);
 
         let map = map.unwrap();
         let collected: Vec<_> = map.iter::<std::ops::Range<u64>>().collect();
@@ -306,7 +333,8 @@ mod tests {
 
     #[test]
     fn split_when_collection_becomes_bigger() {
-        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
+        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35], TEST_BOUNDS)
+            .unwrap();
 
         let a = a
             .map_inplace(|iter| {
@@ -325,7 +353,7 @@ mod tests {
 
     #[test]
     fn split_returns_none_when_empty() {
-        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15]).unwrap();
+        let a = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15], TEST_BOUNDS).unwrap();
 
         let result = a.map_inplace(|_| std::iter::empty());
 
@@ -334,7 +362,9 @@ mod tests {
 
     #[test]
     fn range_with_initial_offset() {
-        let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257]).unwrap();
+        let encoded =
+            SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257], TEST_BOUNDS)
+                .unwrap();
         assert_eq!(
             vec![10u64..=19, 255u64..=256],
             encoded.iter_owned().collect::<Vec<_>>()
@@ -343,7 +373,9 @@ mod tests {
 
     #[test]
     fn owned_iterator() {
-        let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257]).unwrap();
+        let encoded =
+            SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257], TEST_BOUNDS)
+                .unwrap();
         let collected: Vec<_> = encoded.iter_owned().collect();
         assert_eq!(2, collected.len());
         assert_eq!(10u64..=19, collected[0]);
@@ -351,7 +383,9 @@ mod tests {
     }
     #[test]
     fn owned_into_iterator() {
-        let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257]).unwrap();
+        let encoded =
+            SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..20, 255..257], TEST_BOUNDS)
+                .unwrap();
         let collected: Vec<_> = encoded.into_iter().collect();
         assert_eq!(2, collected.len());
         assert_eq!(NonZeroRange::new(10u64..20), collected[0]);
@@ -361,30 +395,36 @@ mod tests {
     #[test]
     fn assert_big_gap_causes_error() {
         let error =
-            SortedRanges::<u16, u8>::try_from_ordered_iter([10u32..20, 276..280]).unwrap_err();
+            SortedRanges::<u16, u8>::try_from_ordered_iter([10u32..20, 276..280], TEST_BOUNDS)
+                .unwrap_err();
         assert!(error.to_string().contains("out of range"), "{error}");
     }
 
     #[test]
     fn assert_big_ranges_cause_error() {
-        let error = SortedRanges::<u8, u16>::try_from_ordered_iter([10u32..280]).unwrap_err();
+        let error =
+            SortedRanges::<u8, u16>::try_from_ordered_iter([10u32..280], TEST_BOUNDS).unwrap_err();
         assert!(error.to_string().contains("out of range"), "{error}");
     }
     #[test]
     fn zero_ranges_cause_error() {
-        let error = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..10]).unwrap_err();
+        let error =
+            SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..10], TEST_BOUNDS).unwrap_err();
         assert!(error.to_string().contains("must be >"), "{error}");
     }
 
     #[test]
     fn overlapping_cause_error() {
-        let error = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..12, 11..12]).unwrap_err();
+        let error = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..12, 11..12], TEST_BOUNDS)
+            .unwrap_err();
         assert!(error.to_string().contains("must be >"), "{error}");
     }
 
     #[test]
     fn iterate_with_different_output_types() {
-        let encoded = SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35]).unwrap();
+        let encoded =
+            SortedRanges::<u8, u8>::try_from_ordered_iter([10u32..15, 30..35], TEST_BOUNDS)
+                .unwrap();
 
         let as_range: Vec<_> = encoded.iter::<Range<u64>>().collect();
         assert_eq!(vec![10u64..15, 30..35], as_range);

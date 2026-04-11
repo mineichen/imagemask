@@ -12,6 +12,7 @@ mod non_zero;
 mod rect;
 mod set;
 mod unchecked_cast;
+mod with_bounds;
 
 pub use assert_sorted_iter::*;
 #[cfg(feature = "async-io")]
@@ -22,6 +23,7 @@ pub use non_zero::*;
 pub use rect::*;
 pub use set::*;
 pub use unchecked_cast::*;
+pub use with_bounds::*;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct OrderedRangeItem<TMeta> {

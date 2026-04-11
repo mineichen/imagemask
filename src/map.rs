@@ -6,7 +6,10 @@ use std::{
 
 use num_traits::Zero;
 
-use crate::{CreateRange, NonZeroRange, SignedNonZeroable, SortedRangesIter, UncheckedCast};
+use crate::{
+    CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, SortedRangesIter,
+    UncheckedCast,
+};
 
 mod iter;
 mod map_inplace;
@@ -29,6 +32,7 @@ pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
     included: Vec<TIncluded>,
     excluded: Vec<TExcluded>,
     meta: TMeta,
+    bounds: Rect<u32>,
 }
 impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded, TMeta> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,25 +45,31 @@ impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded
 type CopiedSliceIter<'a, T> = std::iter::Copied<std::slice::Iter<'a, T>>;
 
 impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>> {
-    pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta) -> Self
+    pub fn new<TRange>(r: NonZeroRange<TRange>, meta: TMeta, bounds: Rect<u32>) -> Self
     where
         TRange:
             UncheckedCast<TIncluded> + UncheckedCast<TExcluded> + std::ops::Sub<Output = TRange>,
     {
+        assert!(bounds.x == 0);
+        assert!(bounds.y == 0);
         Self {
             included: vec![r.len().cast_unchecked()],
             excluded: vec![r.start.cast_unchecked()],
             meta: vec![meta],
+            bounds,
         }
     }
     pub fn try_from_ordered_iter<TRange>(
         iter: impl IntoIterator<Item = (Range<TRange>, TMeta)>,
+        bounds: Rect<u32>,
     ) -> Result<Self, String>
     where
         TRange: Into<u64>,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
+        assert!(bounds.x == 0);
+        assert!(bounds.y == 0);
         fn create_checked<T: TryFrom<u64, Error: Display>>(
             start: u64,
             end: u64,
@@ -102,6 +112,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             included,
             excluded,
             meta,
+            bounds,
         })
     }
     pub fn iter<T: CreateRange<Item: Zero>>(
@@ -170,6 +181,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             self.included.iter().copied(),
             self.excluded.iter().copied(),
             T::Item::default(),
+            self.bounds,
         )
     }
     pub fn ranges_owned<T: CreateRange>(
@@ -184,7 +196,16 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             self.included.into_iter(),
             self.excluded.into_iter(),
             T::Item::default(),
+            self.bounds,
         )
+    }
+}
+
+impl<TIncluded, TExcluded, TMeta> ImageDimension
+    for SortedRangesMap<TIncluded, TExcluded, TMeta>
+{
+    fn width(&self) -> NonZero<u32> {
+        self.bounds.width
     }
 }
 
@@ -249,6 +270,10 @@ mod tests {
 
     use super::*;
 
+    fn test_bounds() -> Rect<u32> {
+        Rect::new(0, 0, NonZero::new(1000u32).unwrap(), NonZero::new(1000u32).unwrap())
+    }
+
     #[cfg(feature = "range-set-blaze-0_5")]
     mod blaze {
         use super::*;
@@ -271,16 +296,15 @@ mod tests {
         }
         #[test]
         fn combine_owned() {
-            //type MetaItem = String;
             let a = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (10u32..30, "a_first".into()),
                 (42..50, "a_second".into()),
-            ])
+            ], test_bounds())
             .unwrap();
             let b = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (20u32..30, "b_first".into()),
                 (41..45, "b_second".into()),
-            ])
+            ], test_bounds())
             .unwrap();
 
             let a_iter = a.iter_owned::<RangeInclusive<usize>>();
@@ -306,12 +330,12 @@ mod tests {
             let a = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (10u32..30, "a_first".into()),
                 (42..50, "a_second".into()),
-            ])
+            ], test_bounds())
             .unwrap();
             let b = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter([
                 (20u32..30, "b_first".into()),
                 (41..45, "b_second".into()),
-            ])
+            ], test_bounds())
             .unwrap();
 
             let b_iter = b.iter_owned::<RangeInclusive<u64>>();
@@ -339,7 +363,7 @@ mod tests {
         let map = SortedRangesMap::<u32, u32, Vec<&str>>::try_from_ordered_iter([
             (0u64..1, "first"),
             (5u64..6, "second"),
-        ]);
+        ], test_bounds());
 
         let map = map.unwrap();
         let collected: Vec<_> = map.iter::<std::ops::Range<u64>>().map(|x| x.0).collect();
@@ -351,7 +375,7 @@ mod tests {
         let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..20, "first"),
             (255..257, "second"),
-        ])
+        ], test_bounds())
         .unwrap();
         assert_eq!(
             vec![(10u64..=19, &"first"), (255u64..=256, &"second")],
@@ -364,7 +388,7 @@ mod tests {
         let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..20, "first".to_string()),
             (255..257, "second".to_string()),
-        ])
+        ], test_bounds())
         .unwrap();
         let collected: Vec<_> = encoded.iter_owned::<RangeInclusive<u64>>().collect();
         assert_eq!(10u64..=19, collected[0].0);
@@ -378,7 +402,7 @@ mod tests {
         let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..20, "first".to_string()),
             (255..257, "second".to_string()),
-        ])
+        ], test_bounds())
         .unwrap();
         let collected: Vec<_> = encoded.into_iter().collect();
         assert_eq!(2, collected.len());
@@ -399,20 +423,20 @@ mod tests {
         let error = SortedRangesMap::<u16, u8, _>::try_from_ordered_iter([
             (10u32..20, "first"),
             (276..280, "second"),
-        ])
+        ], test_bounds())
         .unwrap_err();
         assert!(error.contains("out of range"), "{error}");
     }
 
     #[test]
     fn assert_big_ranges_cause_error() {
-        let error = SortedRangesMap::<u8, u16, _>::try_from_ordered_iter([(10u32..280, "first")])
+        let error = SortedRangesMap::<u8, u16, _>::try_from_ordered_iter([(10u32..280, "first")], test_bounds())
             .unwrap_err();
         assert!(error.contains("out of range"), "{error}");
     }
     #[test]
     fn zero_ranges_cause_error() {
-        let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([(10u32..10, "first")])
+        let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([(10u32..10, "first")], test_bounds())
             .unwrap_err();
         assert!(error.contains("> 10"), "{error}");
     }
@@ -422,7 +446,7 @@ mod tests {
         let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter([
             (10u32..12, "first"),
             (11..12, "second"),
-        ])
+        ], test_bounds())
         .unwrap_err();
         assert!(error.contains("> 12"), "{error}");
     }
@@ -432,7 +456,7 @@ mod tests {
         let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
             (10u32..15, "a1".to_string()),
             (30..35, "a2".to_string()),
-        ])
+        ], test_bounds())
         .unwrap();
 
         let a = a
@@ -457,7 +481,7 @@ mod tests {
         let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([
             (10u32..15, "first".to_string()),
             (30..35, "second".to_string()),
-        ])
+        ], test_bounds())
         .unwrap();
 
         let a = a
@@ -487,7 +511,7 @@ mod tests {
         let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter([(
             10u32..15,
             "test".to_string(),
-        )])
+        )], test_bounds())
         .unwrap();
 
         let result = a.map_inplace(|_| std::iter::empty());

@@ -1,6 +1,6 @@
-use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+use std::{cell::RefCell, marker::PhantomData, num::NonZero, rc::Rc};
 
-use crate::{CreateRange, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, SignedNonZeroable};
 
 /// result of
 pub struct ChunkByRowRanges<T: Iterator, R: CreateRange<Item: SignedNonZeroable>> {
@@ -130,8 +130,6 @@ where
         })?;
 
         if range.end() > self.next_line_start {
-            // # Safety
-            // Checked in if...
             let remaining_len = unsafe {
                 SignedNonZeroable::create_non_zero_unchecked(range.end() - self.next_line_start)
             };
@@ -139,8 +137,6 @@ where
             shared.pending_nextline =
                 Some(R::new_debug_checked(self.next_line_start, remaining_len));
 
-            // # Safety
-            // Would return None above, if start >= self.next_line_start
             let clip_len = unsafe {
                 SignedNonZeroable::create_non_zero_unchecked(self.next_line_start - range.start())
             };
@@ -151,20 +147,43 @@ where
     }
 }
 
+impl<T, R> ImageDimension for ChunkByRowRanges<T, R>
+where
+    T: Iterator<Item = R> + ImageDimension,
+    R: CreateRange<Item: SignedNonZeroable>,
+{
+    fn width(&self) -> NonZero<u32> {
+        self.shared.borrow().source.width()
+    }
+}
+
+impl<T, R> ImageDimension for ChunkByRowRangesRowIter<T, R>
+where
+    T: Iterator<Item = R> + ImageDimension,
+    R: CreateRange,
+    R::Item: Copy + Ord + std::ops::Sub<Output = R::Item>,
+{
+    fn width(&self) -> NonZero<u32> {
+        self.shared.borrow().source.width()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{
-        num::{NonZero, NonZeroUsize},
-        ops::Range,
-    };
+    use std::{num::NonZero, ops::Range};
 
     use super::*;
-    const NON_ZERO_TEN: NonZeroUsize = NonZero::new(10).unwrap();
+    use crate::{ImageDimension, WithBounds};
+    const NON_ZERO_TEN: NonZero<usize> = NonZero::new(10).unwrap();
+    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
 
     #[test]
     fn split_without_linebreak() {
         let source = [0..4, 5..10, 11..20];
-        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
+        let source = WithBounds::new(source.into_iter(), WIDTH_U32);
+        let chunked = ChunkByRowRanges::<_, Range<usize>>::new(source, NON_ZERO_TEN);
+        assert_eq!(chunked.width(), WIDTH_U32);
+        let sums = chunked
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         assert_eq!(sums, vec!((0, vec![0..4, 5..10]), (1, vec![11..20])));
@@ -180,7 +199,8 @@ mod tests {
     #[test]
     fn split_with_filtered() {
         let source = [0..3, 6..11, 12..20];
-        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
+        let source = WithBounds::new(source.into_iter(), WIDTH_U32);
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source, NON_ZERO_TEN)
             .skip(1)
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
             .collect::<Vec<_>>();

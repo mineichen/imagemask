@@ -2,13 +2,14 @@ use std::{fmt::Display, io};
 
 use futures_core::Stream;
 
-use crate::CreateRange;
+use crate::{CreateRange, Rect};
 
 use super::{Builder, SortedRanges};
 
 impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     pub fn try_from_ordered_stream<TStream, T>(
         stream: TStream,
+        bounds: Rect<u32>,
     ) -> TryFromOrderedStreamFuture<TStream, TIncluded, TExcluded>
     where
         TStream: Stream<Item = io::Result<T>>,
@@ -16,9 +17,12 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
+        assert!(bounds.x == 0);
+        assert!(bounds.y == 0);
         TryFromOrderedStreamFuture {
             stream: stream,
             builder: None,
+            bounds: Some(bounds),
         }
     }
 }
@@ -27,6 +31,7 @@ pin_project_lite::pin_project!(
         #[pin]
         stream: S,
         builder: Option<Builder<TIncluded, TExcluded>>,
+        bounds: Option<Rect<u32>>,
     }
 );
 impl<S, T, TIncluded, TExcluded> std::future::Future
@@ -72,7 +77,13 @@ where
                     }
                 }
                 Some(Err(e)) => return std::task::Poll::Ready(Err(e)),
-                None => return std::task::Poll::Ready(Ok(this.builder.take().unwrap().build())),
+                None => {
+                    return std::task::Poll::Ready(Ok(this
+                        .builder
+                        .take()
+                        .unwrap()
+                        .build(this.bounds.take().unwrap())));
+                }
             }
         }
     }
@@ -84,15 +95,23 @@ mod tests {
 
     use super::*;
 
+    const TEST_BOUNDS: Rect<u32> = Rect::new(
+        0,
+        0,
+        std::num::NonZero::new(1000u32).unwrap(),
+        std::num::NonZero::new(1000u32).unwrap(),
+    );
+
     #[tokio::test]
     async fn try_from_stream() -> TestResult {
         let ranges_array = [0u8..10, 16..20];
-        let ranges = SortedRanges::<u64, u64>::try_from_ordered_stream(futures_util::stream::iter(
-            ranges_array.iter().map(|x| Ok(x.clone())),
-        ))
+        let ranges = SortedRanges::<u64, u64>::try_from_ordered_stream(
+            futures_util::stream::iter(ranges_array.iter().map(|x| Ok(x.clone()))),
+            TEST_BOUNDS,
+        )
         .await?;
         assert_eq!(
-            SortedRanges::<u64, u64>::try_from_ordered_iter(ranges_array)?,
+            SortedRanges::<u64, u64>::try_from_ordered_iter(ranges_array, TEST_BOUNDS)?,
             ranges
         );
         Ok(())

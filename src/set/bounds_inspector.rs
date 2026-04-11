@@ -1,13 +1,13 @@
-use std::{iter::FusedIterator, marker::PhantomData};
+use std::{iter::FusedIterator, marker::PhantomData, num::NonZero};
 
 use num_traits::{Bounded, One, Zero};
 
-use crate::{CreateRange, Rect, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable};
 
 #[cfg(feature = "range-set-blaze-0_5")]
 use std::ops::RangeInclusive;
 
-pub struct BoundsInspector<T: Iterator, R: CreateRange> {
+pub struct BoundsInspector<T, R: CreateRange> {
     parent: T,
     width: <R::Item as SignedNonZeroable>::NonZero,
     _range: PhantomData<R>,
@@ -119,6 +119,16 @@ where
 {
 }
 
+impl<T, R> ImageDimension for BoundsInspector<T, R>
+where
+    T: Iterator<Item = R> + ImageDimension,
+    R: CreateRange,
+{
+    fn width(&self) -> NonZero<u32> {
+        self.parent.width()
+    }
+}
+
 #[cfg(feature = "range-set-blaze-0_5")]
 mod range_set_blaze_0_5_interop {
     use range_set_blaze_0_5::{Integer, SortedDisjoint, SortedStarts};
@@ -158,34 +168,36 @@ mod range_set_blaze_0_5_interop {
 
 #[cfg(test)]
 mod tests {
-    use std::{num::NonZeroUsize, ops::Range};
+    use std::{num::NonZero, ops::Range};
 
     use super::*;
+    use crate::{ImageDimension, WithBounds};
 
-    const NON_ZERO_TEN: NonZeroUsize = NonZeroUsize::new(10).unwrap();
+    const NON_ZERO_TEN: NonZero<usize> = NonZero::new(10).unwrap();
+    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
 
     #[test]
     fn single_range_crossing_image_width() {
-        let source = [1..28usize];
-        let mut inspector =
-            BoundsInspector::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN);
+        let source = WithBounds::new([1..28usize].into_iter(), WIDTH_U32);
+        let mut inspector = BoundsInspector::<_, Range<usize>>::new(source, NON_ZERO_TEN);
         assert_eq!(1, (&mut inspector).count());
         assert_eq!(
             inspector.bounds(),
             Some(Rect::new(
                 0usize,
                 0,
-                NonZeroUsize::new(10).unwrap(),
-                NonZeroUsize::new(3).unwrap()
+                NonZero::new(10).unwrap(),
+                NonZero::new(3).unwrap()
             ))
         );
+        assert_eq!(inspector.width(), WIDTH_U32);
     }
 
     #[test]
     fn multiple_ranges_with_different_lengths_and_row_gaps() {
         let source = [3..6usize, 30..33, 55..65];
-        let mut inspector =
-            BoundsInspector::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN);
+        let source = WithBounds::new(source.into_iter(), WIDTH_U32);
+        let mut inspector = BoundsInspector::<_, Range<usize>>::new(source, NON_ZERO_TEN);
         let count = (&mut inspector).count();
         assert_eq!(count, 3);
         assert_eq!(
@@ -193,16 +205,19 @@ mod tests {
             Some(Rect::new(
                 0usize,
                 0,
-                NonZeroUsize::new(10).unwrap(),
-                NonZeroUsize::new(7).unwrap()
+                NonZero::new(10).unwrap(),
+                NonZero::new(7).unwrap()
             ))
         );
+        assert_eq!(inspector.width(), WIDTH_U32);
     }
 
     #[test]
     fn empty_iterator_returns_none() {
         let source: [Range<usize>; 0] = [];
-        let inspector = BoundsInspector::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN);
+        let source = WithBounds::new(source.into_iter(), WIDTH_U32);
+        let inspector = BoundsInspector::<_, Range<usize>>::new(source, NON_ZERO_TEN);
         assert_eq!(inspector.bounds(), None);
+        assert_eq!(inspector.width(), WIDTH_U32);
     }
 }

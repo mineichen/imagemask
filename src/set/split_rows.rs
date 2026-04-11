@@ -1,6 +1,6 @@
-use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData};
+use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData, num::NonZero};
 
-use crate::{CreateRange, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, SignedNonZeroable};
 
 pub struct SplitRowsIter<T: Iterator, R: CreateRange> {
     parent: T,
@@ -83,6 +83,16 @@ where
     >,
 {
 }
+
+impl<T, R> ImageDimension for SplitRowsIter<T, R>
+where
+    T: Iterator<Item = R> + ImageDimension,
+    R: CreateRange,
+{
+    fn width(&self) -> NonZero<u32> {
+        self.parent.width()
+    }
+}
 #[cfg(feature = "range-set-blaze-0_5")]
 mod range_set_blaze_0_5_interop {
     use range_set_blaze_0_5::{Integer, SortedStarts};
@@ -108,23 +118,27 @@ mod range_set_blaze_0_5_interop {
 
 #[cfg(test)]
 mod tests {
-    use std::{num::NonZeroUsize, ops::Range};
+    use std::{num::NonZero, ops::Range};
 
     use super::*;
+    use crate::{ImageDimension, WithBounds};
 
-    const WIDTH: NonZeroUsize = NonZeroUsize::new(10).unwrap();
+    const WIDTH: NonZero<usize> = NonZero::new(10).unwrap();
+    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
 
     #[test]
     fn range_within_single_row() {
-        let source = [0..5usize];
-        let result: Vec<_> = SplitRowsIter::new(source.into_iter(), WIDTH).collect();
+        let source = WithBounds::new([0..5usize].into_iter(), WIDTH_U32);
+        let result: Vec<_> = SplitRowsIter::new(source, WIDTH).collect();
         assert_eq!(result, vec![0..5]);
     }
 
     #[test]
     fn range_crossing_one_row_boundary() {
-        let source = [5..15usize];
-        let result: Vec<_> = SplitRowsIter::new(source.into_iter(), WIDTH).collect();
+        let source = WithBounds::new([5..15usize].into_iter(), WIDTH_U32);
+        let split = SplitRowsIter::new(source, WIDTH);
+        assert_eq!(split.width(), WIDTH_U32);
+        let result: Vec<_> = split.collect();
         assert_eq!(result, vec![5..10, 10..15]);
     }
 
