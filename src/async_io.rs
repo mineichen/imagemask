@@ -18,14 +18,14 @@ const PROTOCOL_VERSION: u8 = 1;
 const HEADER_SIZE: usize = 3 + U32_SIZE * 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WriterParams {
+pub struct Roi {
     pub offset_x: u32,
     pub offset_y: u32,
     pub width: NonZeroU32,
     pub height: NonZeroU32,
 }
 
-impl WriterParams {
+impl Roi {
     pub fn new(offset_x: u32, offset_y: u32, width: NonZeroU32, height: NonZeroU32) -> Self {
         Self {
             offset_x,
@@ -35,15 +35,28 @@ impl WriterParams {
         }
     }
 
-    fn to_header(self) -> Header {
-        Header::new(
-            DataType::U64,
-            DataType::U64,
-            self.offset_x,
-            self.offset_y,
-            self.width,
-            self.height,
-        )
+    fn to_bytes(&self) -> [u8; U32_SIZE * 4] {
+        let mut buf = [0u8; U32_SIZE * 4];
+        write_u32(&mut buf[..], self.offset_x);
+        write_u32(&mut buf[U32_SIZE..], self.offset_y);
+        write_u32(&mut buf[U32_SIZE * 2..], self.width.get());
+        write_u32(&mut buf[U32_SIZE * 3..], self.height.get());
+        buf
+    }
+
+    fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
+        let width_pos = U32_SIZE * 2;
+        let height_pos = U32_SIZE * 3;
+        Ok(Self {
+            offset_x: read_u32(bytes),
+            offset_y: read_u32(&bytes[U32_SIZE..]),
+            width: read_u32(&bytes[width_pos..]).try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Unexpected zero for width")
+            })?,
+            height: read_u32(&bytes[height_pos..]).try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Unexpected zero for height")
+            })?,
+        })
     }
 }
 
@@ -55,7 +68,7 @@ pub enum DataType {
 
 impl TryFrom<u8> for DataType {
     type Error = io::Error;
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> io::Result<Self> {
         match value {
             0 => Ok(DataType::U64),
             _ => Err(io::Error::new(
@@ -71,29 +84,16 @@ struct Header {
     version: u8,
     included_type: DataType,
     excluded_type: DataType,
-    offset_x: u32,
-    offset_y: u32,
-    width: NonZeroU32,
-    height: NonZeroU32,
+    roi: Roi,
 }
 
 impl Header {
-    fn new(
-        included_type: DataType,
-        excluded_type: DataType,
-        offset_x: u32,
-        offset_y: u32,
-        width: NonZeroU32,
-        height: NonZeroU32,
-    ) -> Self {
+    fn new(included_type: DataType, excluded_type: DataType, roi: Roi) -> Self {
         Self {
             version: PROTOCOL_VERSION,
             excluded_type,
             included_type,
-            offset_x,
-            offset_y,
-            width,
-            height,
+            roi,
         }
     }
     fn to_bytes(&self) -> [u8; HEADER_SIZE] {
@@ -101,33 +101,21 @@ impl Header {
         buf[0] = self.version;
         buf[1] = self.included_type as u8;
         buf[2] = self.excluded_type as u8;
-        write_u32(&mut buf[3..], self.offset_x);
-        write_u32(&mut buf[3 + U32_SIZE..], self.offset_y);
-        write_u32(&mut buf[3 + U32_SIZE * 2..], self.width.get());
-        write_u32(&mut buf[3 + U32_SIZE * 3..], self.height.get());
+        buf[3..].copy_from_slice(&self.roi.to_bytes());
         buf
     }
-    fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Result<Self, io::Error> {
+    fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> io::Result<Self> {
         if bytes[0] != PROTOCOL_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Unsupported protocol version: {:#x}", bytes[0]),
             ));
         }
-        let width_pos = 3 + U32_SIZE * 2;
-        let height_pos = 3 + U32_SIZE * 3;
         Ok(Self {
             version: bytes[0],
             included_type: DataType::try_from(bytes[1])?,
             excluded_type: DataType::try_from(bytes[2])?,
-            offset_x: read_u32(&bytes[3..]),
-            offset_y: read_u32(&bytes[3 + U32_SIZE..]),
-            width: read_u32(&bytes[width_pos..]).try_into().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "Unexpected zero for width")
-            })?,
-            height: read_u32(&bytes[height_pos..]).try_into().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "Unexpected zero for height")
-            })?,
+            roi: Roi::from_bytes(&bytes[3..])?,
         })
     }
 }
@@ -145,8 +133,8 @@ fn read_u64(buf: &[u8]) -> u64 {
     u64::from_le_bytes(buf[..8].try_into().unwrap())
 }
 
-fn unexpeced_eof() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Unexpected Eof")
+fn unexpected_eof() -> io::Error {
+    io::Error::new(io::ErrorKind::UnexpectedEof, "Unexpected Eof")
 }
 
 fn poll_write_all<W: AsyncWrite + ?Sized>(
@@ -154,11 +142,11 @@ fn poll_write_all<W: AsyncWrite + ?Sized>(
     cx: &mut Context<'_>,
     buf: &[u8],
     offset: &mut usize,
-) -> Poll<Result<(), std::io::Error>> {
+) -> Poll<io::Result<()>> {
     while *offset < buf.len() {
         match ready!(writer.as_mut().poll_write(cx, &buf[*offset..]))? {
             0 => {
-                return Poll::Ready(Err(unexpeced_eof()));
+                return Poll::Ready(Err(unexpected_eof()));
             }
             n => *offset += n,
         }
@@ -171,10 +159,10 @@ fn poll_read_exact<R: AsyncRead + ?Sized>(
     cx: &mut Context<'_>,
     buf: &mut [u8],
     offset: &mut usize,
-) -> Poll<Result<(), std::io::Error>> {
+) -> Poll<io::Result<()>> {
     while *offset < buf.len() {
         match ready!(reader.as_mut().poll_read(cx, &mut buf[*offset..]))? {
-            0 => return Poll::Ready(Err(unexpeced_eof())),
+            0 => return Poll::Ready(Err(unexpected_eof())),
             n => *offset += n,
         }
     }
@@ -183,7 +171,7 @@ fn poll_read_exact<R: AsyncRead + ?Sized>(
 
 trait IntoRangeResult {
     type Range: CreateRange<Item: Sub<Output = <Self::Range as CreateRange>::Item> + Into<u64>>;
-    fn into_range_result(self) -> Result<Self::Range, io::Error>;
+    fn into_range_result(self) -> io::Result<Self::Range>;
 }
 
 impl<T> IntoRangeResult for T
@@ -217,7 +205,7 @@ pin_project! {
         len: usize,
         last_end: u64,
         pending_range: Option<(u64, u64, u64, u64)>,
-        params: WriterParams,
+        roi: Roi,
     }
 }
 
@@ -230,7 +218,7 @@ enum WriterState {
 }
 
 impl<W, S> AsyncRangeWriter<W, S> {
-    pub fn new(writer: W, stream: S, params: WriterParams) -> Self {
+    pub fn new(writer: W, stream: S, roi: Roi) -> Self {
         Self {
             writer,
             stream,
@@ -240,12 +228,12 @@ impl<W, S> AsyncRangeWriter<W, S> {
             len: 0,
             last_end: 0,
             pending_range: None,
-            params,
+            roi,
         }
     }
 
-    pub fn params(&self) -> WriterParams {
-        self.params
+    pub fn roi(&self) -> Roi {
+        self.roi
     }
 }
 
@@ -263,7 +251,7 @@ where
         loop {
             match &mut this.state {
                 WriterState::Header => {
-                    let header = this.params.to_header();
+                    let header = Header::new(DataType::U64, DataType::U64, *this.roi);
                     this.buf[..HEADER_SIZE].copy_from_slice(&header.to_bytes());
                     *this.len = HEADER_SIZE;
                     *this.state = WriterState::WriteBuf;
@@ -272,14 +260,14 @@ where
                     Some(item) => {
                         let r = item.into_range_result()?;
                         let (global_start, global_end) = (r.start().into(), r.end().into());
-                        let flat_offset = (u64::from(this.params.width.get()))
-                            .wrapping_mul(u64::from(this.params.offset_y))
-                            .wrapping_add(u64::from(this.params.offset_x));
+                        let flat_offset = (u64::from(this.roi.width.get()))
+                            .wrapping_mul(u64::from(this.roi.offset_y))
+                            .wrapping_add(u64::from(this.roi.offset_x));
                         let start = global_start - flat_offset;
                         let end = global_end - flat_offset;
                         let len = end - start;
-                        let width = u64::from(this.params.width.get());
-                        let ox = u64::from(this.params.offset_x);
+                        let width = u64::from(this.roi.width.get());
+                        let ox = u64::from(this.roi.offset_x);
                         if let Some((pending_start, pending_len, pending_actual_end, gap_base)) =
                             *this.pending_range
                         {
@@ -355,7 +343,7 @@ where
                 WriterState::Closing => {
                     ready!(this.writer.as_mut().poll_close(cx))?;
                     if *this.last_end == 0 {
-                        return Poll::Ready(Err(std::io::Error::new(
+                        return Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
                             "Expected at least 1 range",
                         )));
@@ -400,19 +388,14 @@ impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
             &mut this.pos,
         ))?;
         let header = Header::from_bytes(&this.buf)?;
-        let params = WriterParams::new(
-            header.offset_x,
-            header.offset_y,
-            header.width,
-            header.height,
-        );
-        let offset = u64::from(header.width.get())
-            .wrapping_mul(u64::from(header.offset_y))
-            .wrapping_add(u64::from(header.offset_x));
+        let roi = header.roi;
+        let offset = u64::from(roi.width.get())
+            .wrapping_mul(u64::from(roi.offset_y))
+            .wrapping_add(u64::from(roi.offset_x));
         let reader = this.reader.take().unwrap();
         Poll::Ready(Ok(AsyncRangeReader {
             reader,
-            params,
+            roi,
             offset,
             buf: [0; U64_SIZE * 2],
             pos: 0,
@@ -428,7 +411,7 @@ impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
 pin_project! {
     pub struct AsyncRangeReader<R> {
         #[pin] reader: R,
-        params: WriterParams,
+        roi: Roi,
         buf: [u8; U64_SIZE * 2],
         pos: usize,
         last_end: u64,
@@ -446,8 +429,8 @@ impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
         ReadHeader::new(reader)
     }
 
-    pub fn header(&self) -> WriterParams {
-        self.params
+    pub fn roi(&self) -> Roi {
+        self.roi
     }
 
     pub fn into_iter_local(self) -> Self {
@@ -459,14 +442,14 @@ impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
 }
 
 impl<R: AsyncRead> futures_core::Stream for AsyncRangeReader<R> {
-    type Item = Result<NonZeroRange<u64>, io::Error>;
+    type Item = io::Result<NonZeroRange<u64>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
         if *this.pending_local_len > 0 {
-            let width = u64::from(this.params.width.get());
-            let ox = u64::from(this.params.offset_x);
+            let width = u64::from(this.roi.width.get());
+            let ox = u64::from(this.roi.offset_x);
             let ls = *this.pending_local_start;
             let local_end = ls + *this.pending_local_len;
             let global_start = ls + *this.offset;
@@ -512,8 +495,8 @@ impl<R: AsyncRead> futures_core::Stream for AsyncRangeReader<R> {
                 if *this.local {
                     Poll::Ready(Some(Ok(NonZeroRange::new(start..end))))
                 } else {
-                    let width = u64::from(this.params.width.get());
-                    let ox = u64::from(this.params.offset_x);
+                    let width = u64::from(this.roi.width.get());
+                    let ox = u64::from(this.roi.offset_x);
                     let global_start = start + *this.offset;
                     if ox == 0 {
                         let ge = global_start + len - 1;
@@ -563,10 +546,7 @@ mod tests {
         Header::new(
             DataType::U64,
             DataType::U64,
-            offset_x,
-            offset_y,
-            width,
-            height,
+            Roi::new(offset_x, offset_y, width, height),
         )
         .to_bytes()
         .to_vec()
@@ -601,7 +581,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             stream,
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
         let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
@@ -622,7 +602,7 @@ mod tests {
         let _err = AsyncRangeWriter::new(
             writer,
             futures_util::stream::iter(input),
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         )
         .await
         .unwrap_err();
@@ -643,7 +623,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::InvalidData));
@@ -656,7 +636,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::InvalidData));
@@ -737,7 +717,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
         let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
@@ -752,7 +732,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            WriterParams::new(0, 0, NONZERO_1000, NONZERO_1000),
+            Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
         let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
@@ -786,7 +766,7 @@ mod tests {
                 self: Pin<&mut Self>,
                 _cx: &mut Context<'_>,
                 _buf: &mut [u8],
-            ) -> Poll<std::io::Result<usize>> {
+            ) -> Poll<io::Result<usize>> {
                 Poll::Ready(Err(Error::new(ErrorKind::Other, "test error")))
             }
         }
@@ -808,21 +788,21 @@ mod tests {
                 self: Pin<&mut Self>,
                 _cx: &mut Context<'_>,
                 _buf: &[u8],
-            ) -> Poll<std::io::Result<usize>> {
+            ) -> Poll<io::Result<usize>> {
                 Poll::Ready(Err(Error::new(ErrorKind::Other, "write error")))
             }
 
             fn poll_flush(
                 self: Pin<&mut Self>,
                 _cx: &mut Context<'_>,
-            ) -> Poll<std::io::Result<()>> {
+            ) -> Poll<io::Result<()>> {
                 Poll::Ready(Ok(()))
             }
 
             fn poll_close(
                 self: Pin<&mut Self>,
                 _cx: &mut Context<'_>,
-            ) -> Poll<std::io::Result<()>> {
+            ) -> Poll<io::Result<()>> {
                 Poll::Ready(Ok(()))
             }
         }
@@ -832,7 +812,7 @@ mod tests {
         let async_writer = AsyncRangeWriter::new(
             writer,
             futures_util::stream::iter(ranges),
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = async_writer.await;
         let Err(e) = result else {
@@ -848,7 +828,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(global_ranges.clone()),
-            WriterParams::new(0, 0, NONZERO_1000, NONZERO_1000),
+            Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
 
@@ -888,7 +868,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(global_ranges.clone()),
-            WriterParams::new(offset_x, offset_y, width, height),
+            Roi::new(offset_x, offset_y, width, height),
         );
         writer.await.unwrap();
 
@@ -909,7 +889,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_params_forwarded_to_writer() -> TestResult {
+    async fn reader_roi_forwarded_to_writer() -> TestResult {
         use crate::SortedRanges;
 
         let sorted =
@@ -917,13 +897,13 @@ mod tests {
                 .unwrap();
         let expected: Vec<_> = sorted.iter::<NonZeroRange<u64>>().collect();
 
-        let params = WriterParams::new(0, 0, NONZERO_1000, NONZERO_1000);
+        let roi = Roi::new(0, 0, NONZERO_1000, NONZERO_1000);
         let phase1_buf = {
             let mut buf = Vec::new();
             AsyncRangeWriter::new(
                 &mut buf,
                 futures_util::stream::iter(sorted.iter::<NonZeroRange<u64>>()),
-                params,
+                roi,
             )
             .await
             .unwrap();
@@ -931,11 +911,11 @@ mod tests {
         };
 
         let reader = AsyncRangeReader::new(&phase1_buf[..]).await.unwrap();
-        let reader_params = reader.header();
-        assert_eq!(params, reader_params);
+        let reader_roi = reader.roi();
+        assert_eq!(roi, reader_roi);
 
         let mut phase2_buf = Vec::new();
-        AsyncRangeWriter::new(&mut phase2_buf, reader, reader_params)
+        AsyncRangeWriter::new(&mut phase2_buf, reader, reader_roi)
             .await
             .unwrap();
 
@@ -957,7 +937,7 @@ mod tests {
         let result = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         )
         .await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::Other));
