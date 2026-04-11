@@ -2,7 +2,7 @@ use std::{
     future::Future,
     io::{self, ErrorKind},
     num::NonZeroU32,
-    ops::{RangeInclusive, Sub},
+    ops::Sub,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, ready},
@@ -17,6 +17,36 @@ const U32_SIZE: usize = std::mem::size_of::<u32>();
 const U64_SIZE: usize = std::mem::size_of::<u64>();
 const PROTOCOL_VERSION: u8 = 1;
 const HEADER_SIZE: usize = 3 + U32_SIZE * 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriterParams {
+    pub offset_x: u32,
+    pub offset_y: u32,
+    pub width: NonZeroU32,
+    pub height: NonZeroU32,
+}
+
+impl WriterParams {
+    pub fn new(offset_x: u32, offset_y: u32, width: NonZeroU32, height: NonZeroU32) -> Self {
+        Self {
+            offset_x,
+            offset_y,
+            width,
+            height,
+        }
+    }
+
+    fn to_header(self) -> Header {
+        Header::new(
+            DataType::U64,
+            DataType::U64,
+            self.offset_x,
+            self.offset_y,
+            self.width,
+            self.height,
+        )
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -38,6 +68,8 @@ impl TryFrom<u8> for DataType {
 pub enum WriteProtocolError {
     #[error(transparent)]
     RangeOrder(#[from] RangeOrderError),
+    #[error(transparent)]
+    Read(#[from] ReadProtocolError),
     #[error(transparent)]
     Io(Arc<io::Error>),
 }
@@ -176,7 +208,7 @@ fn poll_write_all<W: AsyncWrite + ?Sized>(
     while *offset < buf.len() {
         match ready!(writer.as_mut().poll_write(cx, &buf[*offset..]))? {
             0 => {
-                return Poll::Ready(Err(unexpeced_eof().into()));
+                return Poll::Ready(Err(unexpeced_eof()));
             }
             n => *offset += n,
         }
@@ -199,21 +231,32 @@ fn poll_read_exact<R: AsyncRead + ?Sized>(
     Poll::Ready(Ok(()))
 }
 
-// pin_project! {
-//     pub struct AsyncRangeWriter<W, S> where S: Stream<Item: CreateRange> {
-//         #[pin] writer: W,
-//         #[pin] stream: S,
-//         state: WriterState,
-//         buf: [u8; HEADER_SIZE],
-//         pos: usize,
-//         len: usize,
-//         last_end: <S::Item as CreateRange>::Item,
-//         offset_x: <S::Item as CreateRange>::Item,
-//         offset_y: <S::Item as CreateRange>::Item,
-//         width: <<S::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
-//         height: <<S::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
-//     }
-// }
+trait IntoRangeResult {
+    type Range: CreateRange<Item: Sub<Output = <Self::Range as CreateRange>::Item> + Into<u64>>;
+    fn into_range_result(self) -> Result<Self::Range, WriteProtocolError>;
+}
+
+impl<T> IntoRangeResult for T
+where
+    T: CreateRange<Item: Sub<Output = <T as CreateRange>::Item> + Into<u64>>,
+{
+    type Range = T;
+    fn into_range_result(self) -> Result<Self::Range, WriteProtocolError> {
+        Ok(self)
+    }
+}
+
+impl<T, E> IntoRangeResult for Result<T, E>
+where
+    T: CreateRange<Item: Sub<Output = <T as CreateRange>::Item> + Into<u64>>,
+    E: Into<WriteProtocolError>,
+{
+    type Range = T;
+    fn into_range_result(self) -> Result<Self::Range, WriteProtocolError> {
+        self.map_err(Into::into)
+    }
+}
+
 pin_project! {
     pub struct AsyncRangeWriter<W, S> {
         #[pin] writer: W,
@@ -224,10 +267,7 @@ pin_project! {
         len: usize,
         last_end: u64,
         pending_range: Option<(u64, u64, u64, u64)>,
-        offset_x: u32,
-        offset_y: u32,
-        width: NonZeroU32,
-        height: NonZeroU32,
+        params: WriterParams,
     }
 }
 
@@ -240,14 +280,7 @@ enum WriterState {
 }
 
 impl<W, S> AsyncRangeWriter<W, S> {
-    pub fn new(
-        writer: W,
-        stream: S,
-        offset_x: u32,
-        offset_y: u32,
-        width: NonZeroU32,
-        height: NonZeroU32,
-    ) -> Self {
+    pub fn new(writer: W, stream: S, params: WriterParams) -> Self {
         Self {
             writer,
             stream,
@@ -257,20 +290,20 @@ impl<W, S> AsyncRangeWriter<W, S> {
             len: 0,
             last_end: 0,
             pending_range: None,
-            offset_x,
-            offset_y,
-            width,
-            height,
+            params,
         }
+    }
+
+    pub fn params(&self) -> WriterParams {
+        self.params
     }
 }
 
 impl<W, S> Future for AsyncRangeWriter<W, S>
 where
     W: AsyncWrite,
-    S: futures_core::Stream<
-            Item: CreateRange<Item: Sub<Output = <S::Item as CreateRange>::Item> + Into<u64>>,
-        >,
+    S: futures_core::Stream,
+    S::Item: IntoRangeResult,
 {
     type Output = Result<(), WriteProtocolError>;
 
@@ -280,29 +313,23 @@ where
         loop {
             match &mut this.state {
                 WriterState::Header => {
-                    let header = Header::new(
-                        DataType::U64,
-                        DataType::U64,
-                        *this.offset_x,
-                        *this.offset_y,
-                        *this.width,
-                        *this.height,
-                    );
+                    let header = this.params.to_header();
                     this.buf[..HEADER_SIZE].copy_from_slice(&header.to_bytes());
                     *this.len = HEADER_SIZE;
                     *this.state = WriterState::WriteBuf;
                 }
                 WriterState::ReadRange => match ready!(this.stream.as_mut().poll_next(cx)) {
-                    Some(r) => {
+                    Some(item) => {
+                        let r = item.into_range_result()?;
                         let (global_start, global_end) = (r.start().into(), r.end().into());
-                        let flat_offset = (u64::from(this.width.get()))
-                            .wrapping_mul(u64::from(*this.offset_y))
-                            .wrapping_add(u64::from(*this.offset_x));
+                        let flat_offset = (u64::from(this.params.width.get()))
+                            .wrapping_mul(u64::from(this.params.offset_y))
+                            .wrapping_add(u64::from(this.params.offset_x));
                         let start = global_start - flat_offset;
                         let end = global_end - flat_offset;
                         let len = end - start;
-                        let width = u64::from(this.width.get());
-                        let ox = u64::from(*this.offset_x);
+                        let width = u64::from(this.params.width.get());
+                        let ox = u64::from(this.params.offset_x);
                         if let Some((pending_start, pending_len, pending_actual_end, gap_base)) =
                             *this.pending_range
                         {
@@ -391,13 +418,68 @@ where
     }
 }
 
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct ReadHeader<R> {
+    reader: Option<R>,
+    buf: [u8; HEADER_SIZE],
+    pos: usize,
+}
+
+impl<R> ReadHeader<R> {
+    fn new(reader: R) -> Self {
+        Self {
+            reader: Some(reader),
+            buf: [0; HEADER_SIZE],
+            pos: 0,
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
+    type Output = Result<AsyncRangeReader<R>, ReadProtocolError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = &mut *self;
+        let reader = this.reader.as_mut().unwrap();
+        ready!(poll_read_exact(
+            Pin::new(reader),
+            cx,
+            &mut this.buf[..],
+            &mut this.pos,
+        ))?;
+        let header = Header::from_bytes(&this.buf)?;
+        let params = WriterParams::new(
+            header.offset_x,
+            header.offset_y,
+            header.width,
+            header.height,
+        );
+        let offset = u64::from(header.width.get())
+            .wrapping_mul(u64::from(header.offset_y))
+            .wrapping_add(u64::from(header.offset_x));
+        let reader = this.reader.take().unwrap();
+        Poll::Ready(Ok(AsyncRangeReader {
+            reader,
+            params,
+            offset,
+            buf: [0; U64_SIZE * 2],
+            pos: 0,
+            last_end: 0,
+            local: false,
+            pending_local_start: 0,
+            pending_local_len: 0,
+            crossed_line_gaps: 0,
+        }))
+    }
+}
+
 pin_project! {
-    pub struct AsyncRangeStream<R> {
+    pub struct AsyncRangeReader<R> {
         #[pin] reader: R,
-        buf: [u8; HEADER_SIZE],
+        params: WriterParams,
+        buf: [u8; U64_SIZE * 2],
         pos: usize,
         last_end: u64,
-        header: Option<Header>,
         offset: u64,
         local: bool,
         pending_local_start: u64,
@@ -406,20 +488,14 @@ pin_project! {
     }
 }
 
-impl<R: AsyncRead + Unpin> AsyncRangeStream<R> {
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader,
-            buf: [0; HEADER_SIZE],
-            pos: 0,
-            last_end: 0,
-            header: None,
-            offset: 0,
-            local: false,
-            pending_local_start: 0,
-            pending_local_len: 0,
-            crossed_line_gaps: 0,
-        }
+impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(reader: R) -> ReadHeader<R> {
+        ReadHeader::new(reader)
+    }
+
+    pub fn params(&self) -> WriterParams {
+        self.params
     }
 
     pub fn into_iter_local(self) -> Self {
@@ -430,108 +506,85 @@ impl<R: AsyncRead + Unpin> AsyncRangeStream<R> {
     }
 }
 
-impl<R: AsyncRead> futures_core::Stream for AsyncRangeStream<R> {
+impl<R: AsyncRead> futures_core::Stream for AsyncRangeReader<R> {
     type Item = Result<NonZeroRange<u64>, ReadProtocolError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
 
-        if this.header.is_none() {
-            ready!(poll_read_exact(
-                this.reader.as_mut(),
-                cx,
-                &mut this.buf[..HEADER_SIZE],
-                this.pos,
-            ))?;
-
-            let header = Header::from_bytes(this.buf)?;
-            *this.offset = u64::from(header.width.get())
-                .wrapping_mul(u64::from(header.offset_y))
-                .wrapping_add(u64::from(header.offset_x));
-            println!("Read HEADER: {header:?}");
-            *this.header = Some(header);
-            *this.pos = 0;
+        if *this.pending_local_len > 0 {
+            let width = u64::from(this.params.width.get());
+            let ox = u64::from(this.params.offset_x);
+            let ls = *this.pending_local_start;
+            let local_end = ls + *this.pending_local_len;
+            let global_start = ls + *this.offset;
+            if ox == 0 {
+                *this.pending_local_len = 0;
+                let chunk = local_end - ls;
+                let ge = global_start + chunk - 1;
+                return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+            }
+            let global_start_line = (global_start + ox) / width;
+            let local_line_end = (global_start_line + 1) * width - *this.offset;
+            if local_line_end >= local_end {
+                *this.pending_local_len = 0;
+                let chunk = local_end - ls;
+                let ge = global_start + chunk - 1;
+                return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+            } else {
+                let chunk = local_line_end - ls;
+                *this.pending_local_start = local_line_end + ox;
+                *this.pending_local_len -= chunk;
+                *this.crossed_line_gaps += 1;
+                let ge = global_start + chunk - 1;
+                return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+            }
         }
 
-        loop {
-            if *this.pending_local_len > 0 {
-                let header = this.header.as_ref().unwrap();
-                let width = u64::from(header.width.get());
-                let ox = u64::from(header.offset_x);
-                let ls = *this.pending_local_start;
-                let local_end = ls + *this.pending_local_len;
-                let global_start = ls + *this.offset;
-                if ox == 0 {
-                    *this.pending_local_len = 0;
-                    let chunk = local_end - ls;
-                    let ge = global_start + chunk - 1;
-                    return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+        match ready!(poll_read_exact(
+            this.reader.as_mut(),
+            cx,
+            &mut this.buf[..],
+            this.pos
+        )) {
+            Ok(()) => {
+                let gap = read_u64(&this.buf[..]);
+                let len = read_u64(&this.buf[U64_SIZE..]);
+                if len == 0 {
+                    return Poll::Ready(None);
                 }
-                let global_start_line = (global_start + ox) / width;
-                let local_line_end = (global_start_line + 1) * width - *this.offset;
-                if local_line_end >= local_end {
-                    *this.pending_local_len = 0;
-                    let chunk = local_end - ls;
-                    let ge = global_start + chunk - 1;
-                    return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+                let start = *this.last_end + gap;
+                let end = start + len;
+                *this.last_end = end;
+                *this.pos = 0;
+                if *this.local {
+                    Poll::Ready(Some(Ok(NonZeroRange::new(start..end))))
                 } else {
-                    let chunk = local_line_end - ls;
-                    *this.pending_local_start = local_line_end + ox;
-                    *this.pending_local_len -= chunk;
-                    *this.crossed_line_gaps += 1;
-                    let ge = global_start + chunk - 1;
-                    return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
-                }
-            }
-
-            match ready!(poll_read_exact(
-                this.reader.as_mut(),
-                cx,
-                &mut this.buf[..U64_SIZE * 2],
-                this.pos
-            )) {
-                Ok(()) => {
-                    let gap = read_u64(&this.buf[..]);
-                    let len = read_u64(&this.buf[U64_SIZE..]);
-                    println!("Read gap {gap}, len {len}, {:?}", &this.buf[..U64_SIZE * 2]);
-                    if len == 0 {
-                        return Poll::Ready(None);
-                    }
-                    let start = *this.last_end + gap;
-                    let end = start + len;
-                    *this.last_end = end;
-                    *this.pos = 0;
-                    if *this.local {
-                        return Poll::Ready(Some(Ok(NonZeroRange::new(start..end))));
+                    let width = u64::from(this.params.width.get());
+                    let ox = u64::from(this.params.offset_x);
+                    let global_start = start + *this.offset;
+                    if ox == 0 {
+                        let ge = global_start + len - 1;
+                        Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))))
                     } else {
-                        let header = this.header.as_ref().unwrap();
-                        let width = u64::from(header.width.get());
-                        let ox = u64::from(header.offset_x);
-                        let global_start = start + *this.offset;
-                        if ox == 0 {
-                            let ge = global_start + len - 1;
-                            return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
-                        }
                         let global_start_line = (global_start + ox) / width;
                         let local_line_end = (global_start_line + 1) * width - *this.offset;
                         if local_line_end >= end {
                             let ge = global_start + len - 1;
-                            return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+                            Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))))
                         } else {
                             let chunk = local_line_end - start;
                             *this.pending_local_start = local_line_end + ox;
                             *this.pending_local_len = end - local_line_end;
                             *this.crossed_line_gaps = 1;
                             let ge = global_start + chunk - 1;
-                            return Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))));
+                            Poll::Ready(Some(Ok(NonZeroRange::new(global_start..ge + 1))))
                         }
                     }
                 }
-                Err(e) if *this.pos == 0 && e.kind() == ErrorKind::UnexpectedEof => {
-                    return Poll::Ready(None);
-                }
-                Err(e) => return Poll::Ready(Some(Err(e.into()))),
             }
+            Err(e) if *this.pos == 0 && e.kind() == ErrorKind::UnexpectedEof => Poll::Ready(None),
+            Err(e) => Poll::Ready(Some(Err(e.into()))),
         }
     }
 }
@@ -540,8 +593,10 @@ impl<R: AsyncRead> futures_core::Stream for AsyncRangeStream<R> {
 mod tests {
 
     use std::io::ErrorKind;
+    use std::ops::RangeInclusive;
 
-    use futures_util::{StreamExt, TryStreamExt};
+    use futures_util::TryStreamExt;
+    use testresult::TestResult;
 
     use super::*;
 
@@ -590,19 +645,21 @@ mod tests {
             .map(|r| NonZeroRange::new(*r.start()..*r.end() + 1))
             .collect();
         let mut buf = Vec::new();
-        let stream = futures_util::stream::iter(ranges);
-        let writer =
-            AsyncRangeWriter::new(&mut buf, stream, 0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
+        let stream = futures_util::stream::iter(ranges.into_iter().map(Ok::<_, io::Error>));
+        let writer = AsyncRangeWriter::new(
+            &mut buf,
+            stream,
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+        );
         writer.await.unwrap();
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(expected, result);
     }
 
     #[tokio::test]
     async fn read_empty_error() {
-        let reader = AsyncRangeStream::new(&[][..]);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(&[][..]).await;
         expect_unexpected_eof(result);
     }
 
@@ -610,15 +667,19 @@ mod tests {
     async fn write_empty_error() {
         let input: [RangeInclusive<u64>; 0] = [];
         let writer = Vec::new();
-        let _err = AsyncRangeWriter::new(writer, futures_util::stream::iter(input))
-            .await
-            .unwrap_err();
+        let _err = AsyncRangeWriter::new(
+            writer,
+            futures_util::stream::iter(input),
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+        )
+        .await
+        .unwrap_err();
     }
 
     #[tokio::test]
     async fn header_only_is_empty() {
         let buf = make_header_bytes(0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert!(result.is_empty());
     }
@@ -630,10 +691,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            0,
-            0,
-            NonZeroU32::MIN,
-            NonZeroU32::MIN,
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
         assert!(matches!(result, Err(WriteProtocolError::RangeOrder { .. })));
@@ -646,10 +704,7 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            0,
-            0,
-            NonZeroU32::MIN,
-            NonZeroU32::MIN,
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
         assert!(matches!(result, Err(WriteProtocolError::RangeOrder { .. })));
@@ -659,8 +714,7 @@ mod tests {
     async fn invalid_protocol_version() {
         let mut buf = vec![0x99, 0x00, 0x00];
         buf.resize(HEADER_SIZE, 0);
-        let reader = AsyncRangeStream::new(&buf[..]);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(&buf[..]).await;
         assert!(matches!(
             result,
             Err(ReadProtocolError::UnsupportedVersion(0x99))
@@ -671,8 +725,7 @@ mod tests {
     async fn invalid_included_data_type() {
         let mut buf = vec![PROTOCOL_VERSION, 0x05, 0x00];
         buf.resize(HEADER_SIZE, 0);
-        let reader = AsyncRangeStream::new(&buf[..]);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(&buf[..]).await;
         assert!(matches!(
             result,
             Err(ReadProtocolError::UnsupportedDataType(0x05))
@@ -683,8 +736,7 @@ mod tests {
     async fn invalid_excluded_data_type() {
         let mut buf = vec![PROTOCOL_VERSION, 0x00, 0xFF];
         buf.resize(HEADER_SIZE, 0);
-        let reader = AsyncRangeStream::new(&buf[..]);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(&buf[..]).await;
         assert!(matches!(
             result,
             Err(ReadProtocolError::UnsupportedDataType(0xFF))
@@ -694,16 +746,14 @@ mod tests {
     #[tokio::test]
     async fn truncated_header_one_byte() {
         let buf = vec![PROTOCOL_VERSION];
-        let reader = AsyncRangeStream::new(&buf[..]);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(&buf[..]).await;
         expect_unexpected_eof(result);
     }
 
     #[tokio::test]
     async fn truncated_header_two_bytes() {
         let buf = vec![PROTOCOL_VERSION, 0x00];
-        let reader = AsyncRangeStream::new(&buf[..]);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(&buf[..]).await;
         expect_unexpected_eof(result);
     }
 
@@ -711,7 +761,7 @@ mod tests {
     async fn truncated_range_partial_gap() {
         let mut buf = make_header_bytes(0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
         buf.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result = reader.try_collect::<Vec<_>>().await;
         expect_unexpected_eof(result);
     }
@@ -720,7 +770,7 @@ mod tests {
     async fn truncated_range_gap_complete_len_partial() {
         let mut buf = make_header_bytes(0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
         buf.extend_from_slice(&make_range_bytes(10, 100)[..12]);
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result = reader.try_collect::<Vec<_>>().await;
         expect_unexpected_eof(result);
     }
@@ -732,13 +782,10 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            0,
-            0,
-            NonZeroU32::MIN,
-            NonZeroU32::MIN,
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(result, vec![NonZeroRange::new(100u64..201)]);
     }
@@ -750,13 +797,10 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(ranges),
-            0,
-            0,
-            NONZERO_1000,
-            NONZERO_1000,
+            WriterParams::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(
             result,
@@ -769,7 +813,7 @@ mod tests {
         let mut buf = make_header_bytes(0, 0, NONZERO_1000, NONZERO_1000);
         buf.extend_from_slice(&make_range_bytes(10, 100));
         buf.extend_from_slice(&make_range_bytes(5, 0));
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(result, vec![NonZeroRange::new(10u64..110)]);
     }
@@ -792,8 +836,7 @@ mod tests {
             }
         }
 
-        let reader = AsyncRangeStream::new(FailingReader);
-        let result = reader.try_collect::<Vec<_>>().await;
+        let result = AsyncRangeReader::new(FailingReader).await;
         assert!(matches!(result, Err(ReadProtocolError::Io(_))));
     }
 
@@ -834,10 +877,7 @@ mod tests {
         let async_writer = AsyncRangeWriter::new(
             writer,
             futures_util::stream::iter(ranges),
-            0,
-            0,
-            NonZeroU32::MIN,
-            NonZeroU32::MIN,
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = async_writer.await;
         let Err(WriteProtocolError::Io(e)) = result else {
@@ -853,14 +893,11 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(global_ranges.clone()),
-            0,
-            0,
-            NONZERO_1000,
-            NONZERO_1000,
+            WriterParams::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
 
-        let reader = AsyncRangeStream::new(&buf[..]);
+        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
 
         let expected: Vec<_> = global_ranges
@@ -896,23 +933,81 @@ mod tests {
         let writer = AsyncRangeWriter::new(
             &mut buf,
             futures_util::stream::iter(global_ranges.clone()),
-            offset_x,
-            offset_y,
-            width,
-            height,
+            WriterParams::new(offset_x, offset_y, width, height),
         );
         writer.await.unwrap();
 
-        let local_reader = AsyncRangeStream::new(&buf[..]).into_iter_local();
+        let local_reader = AsyncRangeReader::new(&buf[..])
+            .await
+            .unwrap()
+            .into_iter_local();
         let local_result: Vec<_> = local_reader.try_collect().await.unwrap();
         assert_eq!(local_result, vec![NonZeroRange::new(0u64..(3 * 17))]);
 
-        let global_reader = AsyncRangeStream::new(&buf[..]);
+        let global_reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
         let global_result: Vec<_> = global_reader
             .map_ok(RangeInclusive::<u64>::from)
             .try_collect()
             .await
             .unwrap();
         assert_eq!(global_result, global_ranges);
+    }
+
+    #[tokio::test]
+    async fn reader_params_forwarded_to_writer() -> TestResult {
+        use crate::SortedRanges;
+        use futures_util::StreamExt;
+
+        let sorted =
+            SortedRanges::<u64, u64>::try_from_ordered_iter([10u64..20, 30..40, 1050..1060])
+                .unwrap();
+        let expected: Vec<_> = sorted.iter::<NonZeroRange<u64>>().collect();
+
+        let params = WriterParams::new(0, 0, NONZERO_1000, NONZERO_1000);
+        let phase1_buf = {
+            let mut buf = Vec::new();
+            AsyncRangeWriter::new(
+                &mut buf,
+                futures_util::stream::iter(sorted.iter::<NonZeroRange<u64>>()),
+                params,
+            )
+            .await
+            .unwrap();
+            buf
+        };
+
+        let reader = AsyncRangeReader::new(&phase1_buf[..]).await.unwrap();
+        let reader_params = reader.params();
+        assert_eq!(params, reader_params);
+
+        let mut phase2_buf = Vec::new();
+        let stream =
+            reader.map(|res| res.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)));
+        AsyncRangeWriter::new(&mut phase2_buf, stream, reader_params)
+            .await
+            .unwrap();
+
+        let verify_reader = AsyncRangeReader::new(&phase2_buf[..]).await.unwrap();
+        let verified = verify_reader.try_collect::<Vec<_>>().await.unwrap();
+        assert_eq!(expected, verified);
+        assert_eq!(phase1_buf, phase2_buf);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stream_io_result_error_propagates() {
+        let ranges: Vec<io::Result<RangeInclusive<u64>>> = vec![
+            Ok(10..=20),
+            Err(io::Error::new(io::ErrorKind::Other, "source error")),
+        ];
+        let mut buf = Vec::new();
+        let result = AsyncRangeWriter::new(
+            &mut buf,
+            futures_util::stream::iter(ranges),
+            WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+        )
+        .await;
+        assert!(matches!(result, Err(WriteProtocolError::Io(_))));
     }
 }
