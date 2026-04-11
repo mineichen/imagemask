@@ -4,7 +4,6 @@ use std::{
     num::NonZeroU32,
     ops::Sub,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -55,64 +54,16 @@ pub enum DataType {
 }
 
 impl TryFrom<u8> for DataType {
-    type Error = ReadProtocolError;
+    type Error = io::Error;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(DataType::U64),
-            _ => Err(ReadProtocolError::UnsupportedDataType(value)),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unsupported data type: {value}"),
+            )),
         }
     }
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum WriteProtocolError {
-    #[error(transparent)]
-    RangeOrder(#[from] RangeOrderError),
-    #[error(transparent)]
-    Read(#[from] ReadProtocolError),
-    #[error(transparent)]
-    Io(Arc<io::Error>),
-}
-
-impl From<std::io::Error> for WriteProtocolError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Io(Arc::new(value))
-    }
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ReadProtocolError {
-    #[error("Unsupported protocol version: {0}")]
-    UnsupportedVersion(u8),
-    #[error("Unsupported data type: {0}")]
-    UnsupportedDataType(u8),
-    #[error("Ranges are not disjoint")]
-    NonDisjointRanges,
-    #[error(transparent)]
-    UnexpectedZero(#[from] UnexpectedZeroError),
-    #[error(transparent)]
-    Io(Arc<io::Error>),
-    #[error(transparent)]
-    RangeOrder(#[from] RangeOrderError),
-}
-
-impl From<io::Error> for ReadProtocolError {
-    fn from(e: io::Error) -> Self {
-        ReadProtocolError::Io(Arc::new(e))
-    }
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("Unexpected zero")]
-pub struct UnexpectedZeroError {
-    buffer_pos: usize,
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("Range start {start} is before previous end {last_end}")]
-pub struct RangeOrderError {
-    start: u64,
-    last_end: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -156,9 +107,12 @@ impl Header {
         write_u32(&mut buf[3 + U32_SIZE * 3..], self.height.get());
         buf
     }
-    fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Result<Self, ReadProtocolError> {
+    fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Result<Self, io::Error> {
         if bytes[0] != PROTOCOL_VERSION {
-            return Err(ReadProtocolError::UnsupportedVersion(bytes[0]));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unsupported protocol version: {:#x}", bytes[0]),
+            ));
         }
         let width_pos = 3 + U32_SIZE * 2;
         let height_pos = 3 + U32_SIZE * 3;
@@ -168,16 +122,12 @@ impl Header {
             excluded_type: DataType::try_from(bytes[2])?,
             offset_x: read_u32(&bytes[3..]),
             offset_y: read_u32(&bytes[3 + U32_SIZE..]),
-            width: read_u32(&bytes[width_pos..])
-                .try_into()
-                .map_err(|_| UnexpectedZeroError {
-                    buffer_pos: width_pos,
-                })?,
-            height: read_u32(&bytes[height_pos..])
-                .try_into()
-                .map_err(|_| UnexpectedZeroError {
-                    buffer_pos: height_pos,
-                })?,
+            width: read_u32(&bytes[width_pos..]).try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Unexpected zero for width")
+            })?,
+            height: read_u32(&bytes[height_pos..]).try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Unexpected zero for height")
+            })?,
         })
     }
 }
@@ -233,7 +183,7 @@ fn poll_read_exact<R: AsyncRead + ?Sized>(
 
 trait IntoRangeResult {
     type Range: CreateRange<Item: Sub<Output = <Self::Range as CreateRange>::Item> + Into<u64>>;
-    fn into_range_result(self) -> Result<Self::Range, WriteProtocolError>;
+    fn into_range_result(self) -> Result<Self::Range, io::Error>;
 }
 
 impl<T> IntoRangeResult for T
@@ -241,7 +191,7 @@ where
     T: CreateRange<Item: Sub<Output = <T as CreateRange>::Item> + Into<u64>>,
 {
     type Range = T;
-    fn into_range_result(self) -> Result<Self::Range, WriteProtocolError> {
+    fn into_range_result(self) -> io::Result<Self::Range> {
         Ok(self)
     }
 }
@@ -249,10 +199,10 @@ where
 impl<T, E> IntoRangeResult for Result<T, E>
 where
     T: CreateRange<Item: Sub<Output = <T as CreateRange>::Item> + Into<u64>>,
-    E: Into<WriteProtocolError>,
+    E: Into<io::Error>,
 {
     type Range = T;
-    fn into_range_result(self) -> Result<Self::Range, WriteProtocolError> {
+    fn into_range_result(self) -> io::Result<Self::Range> {
         self.map_err(Into::into)
     }
 }
@@ -305,7 +255,7 @@ where
     S: futures_core::Stream,
     S::Item: IntoRangeResult,
 {
-    type Output = Result<(), WriteProtocolError>;
+    type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -334,11 +284,12 @@ where
                             *this.pending_range
                         {
                             if start < pending_actual_end {
-                                return Poll::Ready(Err(RangeOrderError {
-                                    start,
-                                    last_end: pending_actual_end,
-                                }
-                                .into()));
+                                return Poll::Ready(Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!(
+                                        "Range start {start} is before previous end {pending_actual_end}"
+                                    ),
+                                )));
                             }
                             let pending_ends_at_line_end =
                                 ox > 0 && (pending_actual_end + ox) % width == 0;
@@ -362,11 +313,13 @@ where
                             }
                         } else {
                             if start < *this.last_end {
-                                return Poll::Ready(Err(RangeOrderError {
-                                    start,
-                                    last_end: *this.last_end,
-                                }
-                                .into()));
+                                return Poll::Ready(Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!(
+                                        "Range start {start} is before previous end {}",
+                                        *this.last_end
+                                    ),
+                                )));
                             }
                             *this.pending_range = Some((start, len, end, *this.last_end));
                             *this.last_end = end;
@@ -405,8 +358,7 @@ where
                         return Poll::Ready(Err(std::io::Error::new(
                             io::ErrorKind::InvalidInput,
                             "Expected at least 1 range",
-                        )
-                        .into()));
+                        )));
                     }
                     *this.state = WriterState::Done;
                 }
@@ -436,7 +388,7 @@ impl<R> ReadHeader<R> {
 }
 
 impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
-    type Output = Result<AsyncRangeReader<R>, ReadProtocolError>;
+    type Output = io::Result<AsyncRangeReader<R>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
@@ -494,7 +446,7 @@ impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
         ReadHeader::new(reader)
     }
 
-    pub fn params(&self) -> WriterParams {
+    pub fn header(&self) -> WriterParams {
         self.params
     }
 
@@ -507,7 +459,7 @@ impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
 }
 
 impl<R: AsyncRead> futures_core::Stream for AsyncRangeReader<R> {
-    type Item = Result<NonZeroRange<u64>, ReadProtocolError>;
+    type Item = Result<NonZeroRange<u64>, io::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
@@ -584,7 +536,7 @@ impl<R: AsyncRead> futures_core::Stream for AsyncRangeReader<R> {
                 }
             }
             Err(e) if *this.pos == 0 && e.kind() == ErrorKind::UnexpectedEof => Poll::Ready(None),
-            Err(e) => Poll::Ready(Some(Err(e.into()))),
+            Err(e) => Poll::Ready(Some(Err(e))),
         }
     }
 }
@@ -627,8 +579,8 @@ mod tests {
         buf
     }
 
-    fn expect_unexpected_eof<T>(result: Result<T, ReadProtocolError>) {
-        let Err(ReadProtocolError::Io(e)) = result else {
+    fn expect_unexpected_eof<T>(result: io::Result<T>) {
+        let Err(e) = result else {
             panic!("Expected io Error")
         };
         assert_eq!(e.kind(), ErrorKind::UnexpectedEof);
@@ -694,7 +646,7 @@ mod tests {
             WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
-        assert!(matches!(result, Err(WriteProtocolError::RangeOrder { .. })));
+        assert!(matches!(result, Err(e) if e.kind() == ErrorKind::InvalidData));
     }
 
     #[tokio::test]
@@ -707,7 +659,7 @@ mod tests {
             WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
-        assert!(matches!(result, Err(WriteProtocolError::RangeOrder { .. })));
+        assert!(matches!(result, Err(e) if e.kind() == ErrorKind::InvalidData));
     }
 
     #[tokio::test]
@@ -715,10 +667,11 @@ mod tests {
         let mut buf = vec![0x99, 0x00, 0x00];
         buf.resize(HEADER_SIZE, 0);
         let result = AsyncRangeReader::new(&buf[..]).await;
-        assert!(matches!(
-            result,
-            Err(ReadProtocolError::UnsupportedVersion(0x99))
-        ));
+        let Err(e) = result else {
+            panic!("Expected error")
+        };
+        assert_eq!(e.kind(), ErrorKind::InvalidData);
+        assert!(e.to_string().contains("Unsupported protocol version: 0x99"));
     }
 
     #[tokio::test]
@@ -726,10 +679,11 @@ mod tests {
         let mut buf = vec![PROTOCOL_VERSION, 0x05, 0x00];
         buf.resize(HEADER_SIZE, 0);
         let result = AsyncRangeReader::new(&buf[..]).await;
-        assert!(matches!(
-            result,
-            Err(ReadProtocolError::UnsupportedDataType(0x05))
-        ));
+        let Err(e) = result else {
+            panic!("Expected error")
+        };
+        assert_eq!(e.kind(), ErrorKind::InvalidData);
+        assert!(e.to_string().contains("Unsupported data type: 5"));
     }
 
     #[tokio::test]
@@ -737,10 +691,11 @@ mod tests {
         let mut buf = vec![PROTOCOL_VERSION, 0x00, 0xFF];
         buf.resize(HEADER_SIZE, 0);
         let result = AsyncRangeReader::new(&buf[..]).await;
-        assert!(matches!(
-            result,
-            Err(ReadProtocolError::UnsupportedDataType(0xFF))
-        ));
+        let Err(e) = result else {
+            panic!("Expected error")
+        };
+        assert_eq!(e.kind(), ErrorKind::InvalidData);
+        assert!(e.to_string().contains("Unsupported data type: 255"));
     }
 
     #[tokio::test]
@@ -837,7 +792,7 @@ mod tests {
         }
 
         let result = AsyncRangeReader::new(FailingReader).await;
-        assert!(matches!(result, Err(ReadProtocolError::Io(_))));
+        assert!(matches!(result, Err(e) if e.kind() == ErrorKind::Other));
     }
 
     #[tokio::test]
@@ -880,7 +835,7 @@ mod tests {
             WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = async_writer.await;
-        let Err(WriteProtocolError::Io(e)) = result else {
+        let Err(e) = result else {
             panic!("Expected Custom io error");
         };
         assert_eq!(e.kind(), ErrorKind::Other);
@@ -956,7 +911,6 @@ mod tests {
     #[tokio::test]
     async fn reader_params_forwarded_to_writer() -> TestResult {
         use crate::SortedRanges;
-        use futures_util::StreamExt;
 
         let sorted =
             SortedRanges::<u64, u64>::try_from_ordered_iter([10u64..20, 30..40, 1050..1060])
@@ -977,13 +931,11 @@ mod tests {
         };
 
         let reader = AsyncRangeReader::new(&phase1_buf[..]).await.unwrap();
-        let reader_params = reader.params();
+        let reader_params = reader.header();
         assert_eq!(params, reader_params);
 
         let mut phase2_buf = Vec::new();
-        let stream =
-            reader.map(|res| res.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)));
-        AsyncRangeWriter::new(&mut phase2_buf, stream, reader_params)
+        AsyncRangeWriter::new(&mut phase2_buf, reader, reader_params)
             .await
             .unwrap();
 
@@ -1008,6 +960,6 @@ mod tests {
             WriterParams::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         )
         .await;
-        assert!(matches!(result, Err(WriteProtocolError::Io(_))));
+        assert!(matches!(result, Err(e) if e.kind() == ErrorKind::Other));
     }
 }
