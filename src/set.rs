@@ -257,7 +257,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             .expect("Constructors make sure, there is always at least one Range")
     }
 
-    pub fn iter<T: CreateRange>(
+    pub fn iter_roi<T: CreateRange>(
         &self,
     ) -> SortedRangesIter<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
@@ -276,7 +276,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.bounds,
         )
     }
-    pub fn iter_owned<T: CreateRange>(
+    pub fn iter_roi_owned<T: CreateRange>(
         self,
     ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
     where
@@ -291,6 +291,32 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.bounds,
         )
     }
+    pub fn iter_global_with<T: CreateRange>(
+        &self,
+        _width: NonZeroU32,
+    ) -> SortedRangesIter<
+        std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
+        std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
+        T,
+    >
+    where
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item>,
+    {
+        self.iter_roi()
+    }
+    pub fn iter_global_owned_with<T: CreateRange>(
+        self,
+        _width: NonZeroU32,
+    ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
+    where
+        TIncluded: UncheckedCast<T::Item>,
+        TExcluded: UncheckedCast<T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item>,
+    {
+        self.iter_roi_owned()
+    }
 }
 
 impl<TIncluded, TExcluded> ImageDimension for SortedRanges<TIncluded, TExcluded> {
@@ -299,25 +325,7 @@ impl<TIncluded, TExcluded> ImageDimension for SortedRanges<TIncluded, TExcluded>
     }
 }
 
-impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>> IntoIterator
-    for SortedRanges<TIncluded, TExcluded>
-{
-    type Item = NonZeroRange<u64>;
-    type IntoIter = SortedRangesIter<
-        std::vec::IntoIter<TIncluded>,
-        std::vec::IntoIter<TExcluded>,
-        NonZeroRange<u64>,
-    >;
 
-    fn into_iter(self) -> Self::IntoIter {
-        SortedRangesIter::new(
-            self.included.into_iter(),
-            self.excluded.into_iter(),
-            0u64,
-            self.bounds,
-        )
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -342,11 +350,11 @@ mod tests {
         let b = SortedRanges::<u8, u8>::try_from_ordered_iter_roi([20u32..30, 41..45], TEST_BOUNDS)
             .unwrap();
 
-        let b_iter = b.iter::<RangeInclusive<u64>>();
+        let b_iter = b.iter_roi::<RangeInclusive<u64>>();
         let a = a.map_inplace(|a_iter| b_iter.union(a_iter)).unwrap();
 
-        assert_eq!(vec![10u64..40, 41..45], a.iter_owned().collect::<Vec<_>>());
-        assert_eq!(vec![20u64..30, 41..45], b.iter_owned().collect::<Vec<_>>());
+        assert_eq!(vec![10u64..40, 41..45], a.iter_roi_owned().collect::<Vec<_>>());
+        assert_eq!(vec![20u64..30, 41..45], b.iter_roi_owned().collect::<Vec<_>>());
     }
 
     #[test]
@@ -355,7 +363,7 @@ mod tests {
             SortedRanges::<u32, u32>::try_from_ordered_iter_roi([0u64..1, 5u64..6], TEST_BOUNDS);
 
         let map = map.unwrap();
-        let collected: Vec<_> = map.iter::<std::ops::Range<u64>>().collect();
+        let collected: Vec<_> = map.iter_roi::<std::ops::Range<u64>>().collect();
         assert_eq!(vec![0u64..1, 5u64..6], collected);
     }
 
@@ -375,7 +383,7 @@ mod tests {
 
         assert_eq!(
             vec![10u64..15, 20..25, 30..35, 40..45],
-            a.iter_owned().collect::<Vec<_>>()
+            a.iter_roi_owned().collect::<Vec<_>>()
         );
     }
 
@@ -396,7 +404,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             vec![10u64..=19, 255u64..=256],
-            encoded.iter_owned().collect::<Vec<_>>()
+            encoded.iter_roi_owned().collect::<Vec<_>>()
         );
     }
 
@@ -405,22 +413,11 @@ mod tests {
         let encoded =
             SortedRanges::<u8, u8>::try_from_ordered_iter_roi([10u32..20, 255..257], TEST_BOUNDS)
                 .unwrap();
-        let collected: Vec<_> = encoded.iter_owned().collect();
+        let collected: Vec<_> = encoded.iter_roi_owned().collect();
         assert_eq!(2, collected.len());
         assert_eq!(10u64..=19, collected[0]);
         assert_eq!(255u64..=256, collected[1]);
     }
-    #[test]
-    fn owned_into_iterator() {
-        let encoded =
-            SortedRanges::<u8, u8>::try_from_ordered_iter_roi([10u32..20, 255..257], TEST_BOUNDS)
-                .unwrap();
-        let collected: Vec<_> = encoded.into_iter().collect();
-        assert_eq!(2, collected.len());
-        assert_eq!(NonZeroRange::new(10u64..20), collected[0]);
-        assert_eq!(NonZeroRange::new(255u64..257), collected[1]);
-    }
-
     #[test]
     fn assert_big_gap_causes_error() {
         let error =
@@ -456,13 +453,13 @@ mod tests {
             SortedRanges::<u8, u8>::try_from_ordered_iter_roi([10u32..15, 30..35], TEST_BOUNDS)
                 .unwrap();
 
-        let as_range: Vec<_> = encoded.iter::<Range<u64>>().collect();
+        let as_range: Vec<_> = encoded.iter_roi::<Range<u64>>().collect();
         assert_eq!(vec![10u64..15, 30..35], as_range);
 
-        let as_range_inclusive: Vec<_> = encoded.iter::<RangeInclusive<u64>>().collect();
+        let as_range_inclusive: Vec<_> = encoded.iter_roi::<RangeInclusive<u64>>().collect();
         assert_eq!(vec![10u64..=14, 30..=34], as_range_inclusive);
 
-        let as_nonzero_range: Vec<_> = encoded.iter::<NonZeroRange<u64>>().collect();
+        let as_nonzero_range: Vec<_> = encoded.iter_roi::<NonZeroRange<u64>>().collect();
         assert_eq!(
             vec![NonZeroRange::new(10u64..15), NonZeroRange::new(30..35)],
             as_nonzero_range

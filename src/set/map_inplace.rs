@@ -26,7 +26,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// }).expect("Is not empty");
     /// assert_eq!(
     ///     vec!(15u64..25, 35..50, 55..65),
-    ///     ranges.iter_owned::<std::ops::Range<u64>>().collect::<Vec<_>>()
+    ///     ranges.iter_roi_owned::<std::ops::Range<u64>>().collect::<Vec<_>>()
     /// );
     /// # Ok(())
     /// # }

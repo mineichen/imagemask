@@ -892,14 +892,14 @@ mod tests {
             bounds,
         )
         .unwrap();
-        let expected: Vec<_> = sorted.iter::<NonZeroRange<u64>>().collect();
+        let expected: Vec<_> = sorted.iter_roi::<NonZeroRange<u64>>().collect();
 
         let roi = Roi::new(0, 0, NONZERO_1000, NONZERO_1000);
         let phase1_buf = {
             let mut buf = Vec::new();
             AsyncRangeWriter::new(
                 &mut buf,
-                futures_util::stream::iter(sorted.iter::<NonZeroRange<u64>>()),
+                futures_util::stream::iter(sorted.iter_roi::<NonZeroRange<u64>>()),
                 roi,
             )
             .await
