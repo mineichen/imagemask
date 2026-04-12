@@ -2,7 +2,7 @@ use std::{
     fmt::{Debug, Display},
     io,
     num::{NonZero, NonZeroU32, NonZeroU64},
-    ops::{Add, Sub},
+    ops::{Add, Mul, Sub},
 };
 
 fn invalid_data<T: Display>(e: T) -> std::io::Error {
@@ -18,6 +18,7 @@ mod clip_2d;
 #[cfg(feature = "async-io")]
 mod future;
 mod iter;
+mod iter_global;
 mod map_inplace;
 mod offsets_iter;
 mod rect;
@@ -28,6 +29,7 @@ pub use bounds_inspector::*;
 pub use chunk_by_row::*;
 pub use clip_2d::*;
 pub use iter::*;
+pub use iter_global::*;
 pub use map_inplace::*;
 pub use offsets_iter::*;
 pub use rect::*;
@@ -293,8 +295,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     }
     pub fn iter_global_with<T: CreateRange>(
         &self,
-        _width: NonZeroU32,
-    ) -> SortedRangesIter<
+        width: NonZeroU32,
+    ) -> SortedRangesIterGlobal<
         std::iter::Copied<std::slice::Iter<'_, TIncluded>>,
         std::iter::Copied<std::slice::Iter<'_, TExcluded>>,
         T,
@@ -302,20 +304,34 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     where
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
-        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item> + Mul<Output = T::Item>,
+        u32: UncheckedCast<T::Item>,
     {
-        self.iter_roi()
+        SortedRangesIterGlobal::new(
+            self.included.iter().copied(),
+            self.excluded.iter().copied(),
+            T::Item::default(),
+            width,
+            self.bounds,
+        )
     }
     pub fn iter_global_owned_with<T: CreateRange>(
         self,
-        _width: NonZeroU32,
-    ) -> SortedRangesIter<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
+        width: NonZeroU32,
+    ) -> SortedRangesIterGlobal<std::vec::IntoIter<TIncluded>, std::vec::IntoIter<TExcluded>, T>
     where
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
-        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item>,
+        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item> + Mul<Output = T::Item>,
+        u32: UncheckedCast<T::Item>,
     {
-        self.iter_roi_owned()
+        SortedRangesIterGlobal::new(
+            self.included.into_iter(),
+            self.excluded.into_iter(),
+            T::Item::default(),
+            width,
+            self.bounds,
+        )
     }
 }
 
@@ -324,8 +340,6 @@ impl<TIncluded, TExcluded> ImageDimension for SortedRanges<TIncluded, TExcluded>
         self.bounds.width
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -353,8 +367,14 @@ mod tests {
         let b_iter = b.iter_roi::<RangeInclusive<u64>>();
         let a = a.map_inplace(|a_iter| b_iter.union(a_iter)).unwrap();
 
-        assert_eq!(vec![10u64..40, 41..45], a.iter_roi_owned().collect::<Vec<_>>());
-        assert_eq!(vec![20u64..30, 41..45], b.iter_roi_owned().collect::<Vec<_>>());
+        assert_eq!(
+            vec![10u64..40, 41..45],
+            a.iter_roi_owned().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            vec![20u64..30, 41..45],
+            b.iter_roi_owned().collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -464,5 +484,33 @@ mod tests {
             vec![NonZeroRange::new(10u64..15), NonZeroRange::new(30..35)],
             as_nonzero_range
         );
+    }
+
+    #[test]
+    fn iter_global_with_different_widths() {
+        let rect = Rect::new(2u32, 1, NonZero::new(4).unwrap(), NonZero::new(3).unwrap());
+        let global_width = NonZero::new(10u32).unwrap();
+        let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(
+            rect.into_rect_iter::<std::ops::Range<u32>>(global_width)
+                .with_bounds(global_width),
+        )
+        .unwrap();
+
+        let width_smaller = NonZero::new(3u32).unwrap();
+        let width_equal = NonZero::new(10u32).unwrap();
+        let width_bigger = NonZero::new(20u32).unwrap();
+
+        let with_smaller: Vec<_> = ranges
+            .iter_global_with::<Range<u64>>(width_smaller)
+            .collect();
+        assert_eq!(with_smaller, vec![5..6, 8..9, 11..12]);
+
+        let with_equal: Vec<_> = ranges.iter_global_with::<Range<u64>>(width_equal).collect();
+        assert_eq!(with_equal, vec![12u64..16, 22..26, 32..36]);
+
+        let with_bigger: Vec<_> = ranges
+            .iter_global_with::<Range<u64>>(width_bigger)
+            .collect();
+        assert_eq!(with_bigger, vec![22..26, 42..46, 62..66]);
     }
 }

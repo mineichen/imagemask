@@ -1,3 +1,7 @@
+use std::{fmt::Debug, ops::Add};
+
+use num_traits::Bounded;
+
 use crate::{MetaRange, NonZeroRange, SignedNonZeroable};
 
 pub trait CreateRange: Sized {
@@ -7,6 +11,8 @@ pub trait CreateRange: Sized {
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
     ) -> Self;
+    fn new_debug_checked_zeroable(start: Self::Item, end: Self::Item) -> Self;
+
     fn start(&self) -> Self::Item;
     fn end(&self) -> Self::Item;
 }
@@ -14,6 +20,8 @@ pub trait CreateRange: Sized {
 impl<
     T: SignedNonZeroable
         + Copy
+        + Debug
+        + PartialOrd
         + num_traits::One
         + std::ops::Sub<Output = T>
         + std::ops::Add<Output = T>,
@@ -22,6 +30,11 @@ impl<
     type Item = T;
     type ListItem<TMeta> = (Self, TMeta);
 
+    #[inline]
+    fn new_debug_checked_zeroable(start: Self::Item, end: Self::Item) -> Self {
+        debug_assert!(start < end);
+        start..=end - T::one()
+    }
     #[inline]
     fn new_debug_checked(
         start: Self::Item,
@@ -39,10 +52,17 @@ impl<
     }
 }
 
-impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
+impl<T: SignedNonZeroable + PartialOrd + Copy + Add<Output = T>> CreateRange
+    for std::ops::Range<T>
+{
     type Item = T;
     type ListItem<TMeta> = (Self, TMeta);
 
+    #[inline]
+    fn new_debug_checked_zeroable(start: Self::Item, end: Self::Item) -> Self {
+        debug_assert!(start < end);
+        start..end
+    }
     #[inline]
     fn new_debug_checked(
         start: Self::Item,
@@ -60,9 +80,16 @@ impl<T: SignedNonZeroable + Copy> CreateRange for std::ops::Range<T> {
     }
 }
 
-impl<T: SignedNonZeroable + Copy + PartialEq> CreateRange for NonZeroRange<T> {
+impl<T: SignedNonZeroable + Copy + PartialEq + Debug + Bounded + Ord> CreateRange
+    for NonZeroRange<T>
+{
     type Item = T;
     type ListItem<TMeta> = MetaRange<Self, TMeta>;
+
+    #[inline]
+    fn new_debug_checked_zeroable(start: Self::Item, end: Self::Item) -> Self {
+        NonZeroRange::new_unchecked(start..end)
+    }
 
     #[inline]
     fn new_debug_checked(

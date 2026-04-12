@@ -5,7 +5,7 @@ use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable, UncheckedCast}
 pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut: CreateRange> {
     include: TIncludedIter,
     excluded: TExcludedIter,
-    offset: TOut::Item,
+    accumulator: TOut::Item,
     bounds: Rect<u32>,
     _out: PhantomData<TOut>,
 }
@@ -16,13 +16,13 @@ impl<TIncludedIter, TExcludedIter, TRange: CreateRange>
     pub(crate) fn new(
         include: TIncludedIter,
         excluded: TExcludedIter,
-        offset: TRange::Item,
+        accumulator: TRange::Item,
         bounds: Rect<u32>,
     ) -> Self {
         Self {
             include,
             excluded,
-            offset,
+            accumulator,
             bounds,
             _out: PhantomData,
         }
@@ -47,11 +47,12 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let exclude = self.excluded.next()?.cast_unchecked();
-        self.offset = self.offset + exclude;
+        self.accumulator = self.accumulator + exclude;
 
         let include = self.include.next()?.cast_unchecked();
-        let out_range = TOut::new_debug_checked(self.offset, include.create_non_zero().unwrap());
-        self.offset = self.offset + include;
+        let out_range =
+            TOut::new_debug_checked(self.accumulator, include.create_non_zero().unwrap());
+        self.accumulator = self.accumulator + include;
 
         Some(out_range)
     }

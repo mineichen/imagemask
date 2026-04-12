@@ -220,7 +220,7 @@ impl<T: PartialOrd + Ord + Copy + Debug + Bounded> NonZeroRange<T> {
     }
     /// # Safety
     /// range.start has to be < range.end
-    pub unsafe fn new_unchecked(into_range: impl Into<RangeUnchecked<T>>) -> Self {
+    pub fn new_unchecked(into_range: impl Into<RangeUnchecked<T>>) -> Self {
         let r = Self(into_range.into());
         debug_assert!(
             r.start < r.end,
