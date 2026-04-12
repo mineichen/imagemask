@@ -11,18 +11,19 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// Returns Some(SortedRanges) if non-empty, None if empty.
     /// ```
     /// use std::ops::RangeInclusive;
-    /// use imask::{Rect, SortedRanges, SourceIterator};
+    /// use imask::{Rect, SortedRanges, SourceIterator, WithBounds};
     /// use std::num::NonZero;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let bounds = Rect::new(0u32, 0, NonZero::new(1000u32).unwrap(), NonZero::new(1000u32).unwrap());
-    /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter([10u32..20, 30..45, 50..60], bounds)?;
+    /// let width = const { NonZero::new(1000u32).unwrap() };
+    /// let source = WithBounds::new([10u32..20, 30..45, 50..60], width);
+    /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(source)?;
     /// let ranges = ranges.map_inplace(|iter| {
     ///     iter.map(|x| {
     ///         let (start, end) = x.into_inner();
     ///         (start+5)..=(end + 5)
     ///     })
-    /// }).expect("Should not be empty");
+    /// }).expect("Is not empty");
     /// assert_eq!(
     ///     vec!(15u64..25, 35..50, 55..65),
     ///     ranges.iter_owned::<std::ops::Range<u64>>().collect::<Vec<_>>()

@@ -577,7 +577,7 @@ mod tests {
             .map(|r| NonZeroRange::new(*r.start()..*r.end() + 1))
             .collect();
         let mut buf = Vec::new();
-        let stream = futures_util::stream::iter(ranges.into_iter().map(Ok::<_, io::Error>));
+        let stream = futures_util::stream::iter(ranges.map(Ok::<_, io::Error>));
         let writer = AsyncRangeWriter::new(
             &mut buf,
             stream,
@@ -792,17 +792,11 @@ mod tests {
                 Poll::Ready(Err(Error::new(ErrorKind::Other, "write error")))
             }
 
-            fn poll_flush(
-                self: Pin<&mut Self>,
-                _cx: &mut Context<'_>,
-            ) -> Poll<io::Result<()>> {
+            fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
                 Poll::Ready(Ok(()))
             }
 
-            fn poll_close(
-                self: Pin<&mut Self>,
-                _cx: &mut Context<'_>,
-            ) -> Poll<io::Result<()>> {
+            fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
                 Poll::Ready(Ok(()))
             }
         }
@@ -893,9 +887,11 @@ mod tests {
         use crate::{Rect, SortedRanges};
 
         let bounds = Rect::new(0u32, 0, NONZERO_1000, NONZERO_1000);
-        let sorted =
-            SortedRanges::<u64, u64>::try_from_ordered_iter([10u64..20, 30..40, 1050..1060], bounds)
-                .unwrap();
+        let sorted = SortedRanges::<u64, u64>::try_from_ordered_iter_roi(
+            [10u64..20, 30..40, 1050..1060],
+            bounds,
+        )
+        .unwrap();
         let expected: Vec<_> = sorted.iter::<NonZeroRange<u64>>().collect();
 
         let roi = Roi::new(0, 0, NONZERO_1000, NONZERO_1000);

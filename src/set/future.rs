@@ -111,7 +111,7 @@ mod tests {
         )
         .await?;
         assert_eq!(
-            SortedRanges::<u64, u64>::try_from_ordered_iter(ranges_array, TEST_BOUNDS)?,
+            SortedRanges::<u64, u64>::try_from_ordered_iter_roi(ranges_array, TEST_BOUNDS)?,
             ranges
         );
         Ok(())

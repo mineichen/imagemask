@@ -11,8 +11,11 @@ pub struct WithBounds<I> {
 }
 
 impl<I> WithBounds<I> {
-    pub fn new(iter: I, width: NonZero<u32>) -> Self {
-        Self { iter, width }
+    pub fn new(iter: impl IntoIterator<IntoIter = I>, width: NonZero<u32>) -> Self {
+        Self {
+            iter: iter.into_iter(),
+            width,
+        }
     }
 
     pub fn into_inner(self) -> I {
