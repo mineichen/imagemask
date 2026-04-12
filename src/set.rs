@@ -311,8 +311,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.included.iter().copied(),
             self.excluded.iter().copied(),
             T::Item::default(),
+            self.bounds.width,
             width,
-            self.bounds,
         )
     }
     pub fn iter_global_owned_with<T: CreateRange>(
@@ -329,8 +329,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.included.into_iter(),
             self.excluded.into_iter(),
             T::Item::default(),
+            self.bounds.width,
             width,
-            self.bounds,
         )
     }
 }
