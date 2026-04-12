@@ -136,7 +136,7 @@ mod range_set_blaze_0_5_interop {
     impl<T, TRangeItem> SortedStarts<TRangeItem> for BoundsInspector<T, RangeInclusive<TRangeItem>>
     where
         TRangeItem: Integer,
-        RangeInclusive<TRangeItem>: CreateRange,
+        T: SortedStarts<TRangeItem>,
         BoundsInspector<T, RangeInclusive<TRangeItem>>:
             FusedIterator<Item = RangeInclusive<TRangeItem>>,
     {

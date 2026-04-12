@@ -33,8 +33,8 @@ where
 
 impl<T, R> Clip2dIter<T, R>
 where
-    T: Iterator<Item = R> + ImageDimension,
-    R: CreateRange<Item: Copy + Ord + std::ops::Add<Output = R::Item>>,
+    T: ImageDimension,
+    R: CreateRange,
     u32: UncheckedCast<R::Item>,
 {
     pub fn try_new(parent: T, roi: Rect<u32>) -> Result<Self, RoiWidthExceedsOriginal> {

@@ -59,21 +59,11 @@ pub trait ImaskSet: Iterator + Sized + ImageDimension {
         Clip2dIter::try_new(self, roi)
     }
 
-    fn split_rows(
-        self,
-        width: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
-    ) -> SplitRowsIter<Self, Self::Item>
+    fn split_rows(self) -> SplitRowsIter<Self, Self::Item>
     where
-        Self::Item: CreateRange<
-            Item: Copy
-                      + Ord
-                      + std::ops::Sub<Output = <Self::Item as CreateRange>::Item>
-                      + std::ops::Add<Output = <Self::Item as CreateRange>::Item>
-                      + std::ops::Mul<Output = <Self::Item as CreateRange>::Item>
-                      + std::ops::Div<Output = <Self::Item as CreateRange>::Item>,
-        >,
+        Self::Item: CreateRange,
     {
-        SplitRowsIter::new(self, width)
+        SplitRowsIter::new(self)
     }
 }
 
