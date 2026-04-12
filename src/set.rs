@@ -1,8 +1,9 @@
 use std::{
+    cmp::Ord,
     fmt::{Debug, Display},
     io,
     num::{NonZero, NonZeroU32, NonZeroU64},
-    ops::{Add, Mul, Sub},
+    ops::{Add, Div, Mul, Rem, Sub},
 };
 
 fn invalid_data<T: Display>(e: T) -> std::io::Error {
@@ -304,7 +305,15 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     where
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
-        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item> + Mul<Output = T::Item>,
+        T::Item: Default
+            + Copy
+            + SignedNonZeroable
+            + Add<Output = T::Item>
+            + Sub<Output = T::Item>
+            + Mul<Output = T::Item>
+            + Div<Output = T::Item>
+            + Rem<Output = T::Item>
+            + Ord,
         u32: UncheckedCast<T::Item>,
     {
         SortedRangesIterGlobal::new(
@@ -322,7 +331,15 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     where
         TIncluded: UncheckedCast<T::Item>,
         TExcluded: UncheckedCast<T::Item>,
-        T::Item: Default + Copy + SignedNonZeroable + Add<Output = T::Item> + Mul<Output = T::Item>,
+        T::Item: Default
+            + Copy
+            + SignedNonZeroable
+            + Add<Output = T::Item>
+            + Sub<Output = T::Item>
+            + Mul<Output = T::Item>
+            + Div<Output = T::Item>
+            + Rem<Output = T::Item>
+            + Ord,
         u32: UncheckedCast<T::Item>,
     {
         SortedRangesIterGlobal::new(

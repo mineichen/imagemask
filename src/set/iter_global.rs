@@ -6,7 +6,6 @@ use std::{
 };
 
 use crate::{CreateRange, ImageDimension, SignedNonZeroable, UncheckedCast};
-start
 pub struct SortedRangesIterGlobal<TIncludedIter, TExcludedIter, TOut: CreateRange> {
     included: TIncludedIter,
     excluded: TExcludedIter,
