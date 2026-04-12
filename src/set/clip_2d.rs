@@ -34,8 +34,6 @@ where
 impl<T, R> Clip2dIter<T, R>
 where
     T: ImageDimension,
-    R: CreateRange,
-    u32: UncheckedCast<R::Item>,
 {
     pub fn try_new(parent: T, roi: Rect<u32>) -> Result<Self, RoiWidthExceedsOriginal> {
         let orig_w = parent.width().get();

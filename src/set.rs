@@ -51,11 +51,7 @@ pub trait ImaskSet: Iterator + Sized + ImageDimension {
     fn try_clip_2d(
         self,
         roi: Rect<u32>,
-    ) -> Result<Clip2dIter<Self, Self::Item>, RoiWidthExceedsOriginal>
-    where
-        Self::Item: CreateRange<Item: Copy + Ord + Add<Output = <Self::Item as CreateRange>::Item>>,
-        u32: UncheckedCast<<Self::Item as CreateRange>::Item>,
-    {
+    ) -> Result<Clip2dIter<Self, Self::Item>, RoiWidthExceedsOriginal> {
         Clip2dIter::try_new(self, roi)
     }
 
