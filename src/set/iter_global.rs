@@ -15,6 +15,11 @@ pub struct SortedRangesIterGlobal<I, E, T: CreateRange> {
     old_width: T::Item,
     new_width_out: T::Item,
     new_width: NonZeroU32,
+    /// Buffered output range end for the shrinking path (`old_width >= new_width`).
+    /// When non-zero, a range starting at `pending_start` is being accumulated;
+    /// it is flushed when the next segment is not adjacent.
+    pending_start: T::Item,
+    pending_end: T::Item,
 }
 
 impl<I, E, T: CreateRange> SortedRangesIterGlobal<I, E, T>
@@ -36,6 +41,8 @@ where
             old_width: old_width.get().cast_unchecked(),
             new_width,
             new_width_out: new_width.get().cast_unchecked(),
+            pending_start: T::Item::default(),
+            pending_end: T::Item::default(),
         }
     }
 }
@@ -66,33 +73,52 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let zero = TOut::Item::default();
-        loop {
-            if self.remaining > zero {
-                let col = self.pos % self.old_width;
-                let row = self.pos / self.old_width;
-                let take = min(self.remaining, self.old_width - col);
-                self.pos = self.pos + take;
-                self.remaining = self.remaining - take;
-                let s = row * self.new_width_out + col;
-                return Some(TOut::new_debug_checked_zeroable(s, s + take));
-            }
-            self.pos = self.pos + self.excluded.next()?.cast_unchecked();
-            let include = self.included.next()?.cast_unchecked();
-            if self.old_width >= self.new_width_out {
-                let end = self.pos + include;
-                let new = |p: TOut::Item| {
-                    (p / self.old_width) * self.new_width_out
-                        + min(p % self.old_width, self.new_width_out)
-                };
-                let (s, e) = (new(self.pos), new(end));
-                self.pos = end;
-                if s < e {
-                    return Some(TOut::new_debug_checked_zeroable(s, e));
-                }
-            } else {
+        if self.remaining > zero {
+            let col = self.pos % self.old_width;
+            let row = self.pos / self.old_width;
+            let take = min(self.remaining, self.old_width - col);
+            self.pos = self.pos + take;
+            self.remaining = self.remaining - take;
+            let s = row * self.new_width_out + col;
+            return Some(TOut::new_debug_checked_zeroable(s, s + take));
+        }
+
+        while let Some(gap) = self.excluded.next() {
+            self.pos = self.pos + gap.cast_unchecked();
+            let include: TOut::Item = self.included.next()?.cast_unchecked();
+
+            if self.old_width < self.new_width_out {
+                // Expanding: pieces have gaps in output space, no merging needed
                 self.remaining = include;
+                return self.next();
+            }
+
+            // Shrinking: remap through row/col, clamping columns to new_width.
+            // Merge adjacent output segments at row boundaries.
+            let end = self.pos + include;
+            let remap = |p: TOut::Item| {
+                (p / self.old_width) * self.new_width_out
+                    + min(p % self.old_width, self.new_width_out)
+            };
+            let (s, e) = (remap(self.pos), remap(end));
+            self.pos = end;
+
+            if self.pending_end == s {
+                self.pending_end = e;
+            } else if s < e {
+                let prev_start = std::mem::replace(&mut self.pending_start, s);
+                let prev_end = std::mem::replace(&mut self.pending_end, e);
+                if prev_start < prev_end {
+                    return Some(TOut::new_debug_checked_zeroable(prev_start, prev_end));
+                }
             }
         }
+        // Flush pending range from shrinking path
+        (self.pending_start < self.pending_end).then(|| {
+            let r = TOut::new_debug_checked_zeroable(self.pending_start, self.pending_end);
+            self.pending_start = self.pending_end;
+            r
+        })
     }
 }
 
