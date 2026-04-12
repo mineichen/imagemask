@@ -41,10 +41,7 @@ pub trait ImaskSet: IntoIterator<IntoIter: ImageDimension> + Sized {
         ChunkByRowRanges::new(self.into_iter())
     }
 
-    fn inspect_bounds<R>(self) -> BoundsInspector<Self::IntoIter, R>
-    where
-        R: CreateRange<Item: SignedNonZeroable>,
-    {
+    fn inspect_bounds<R: CreateRange>(self) -> BoundsInspector<Self::IntoIter, R> {
         BoundsInspector::new(self.into_iter())
     }
 
@@ -55,11 +52,14 @@ pub trait ImaskSet: IntoIterator<IntoIter: ImageDimension> + Sized {
         Clip2dIter::try_new(self.into_iter(), roi)
     }
 
-    fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item>
-    where
-        Self::Item: CreateRange,
-    {
+    fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item> {
         SplitRowsIter::new(self.into_iter())
+    }
+
+    fn sanitize_sorted_disjoint<R: CreateRange<Item: SignedNonZeroable> + Debug>(
+        self,
+    ) -> SanitizeSortedDisjoint<Self::IntoIter, R> {
+        SanitizeSortedDisjoint::new(self.into_iter())
     }
 }
 
