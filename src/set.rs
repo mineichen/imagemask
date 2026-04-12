@@ -33,7 +33,7 @@ pub use rect::*;
 pub use sanitize_sorted_disjoint::*;
 pub use split_rows::*;
 
-pub trait ImaskSet: Iterator + Sized {
+pub trait ImaskSet: Iterator + Sized + ImageDimension {
     /// # Panics
     /// If the previous RowIterator is kept when getting the next RowIterator
     fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
@@ -92,7 +92,7 @@ pub trait ImaskSet: Iterator + Sized {
     }
 }
 
-impl<I: Iterator> ImaskSet for I {}
+impl<I: Iterator + ImageDimension> ImaskSet for I {}
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
