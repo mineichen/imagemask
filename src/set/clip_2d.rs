@@ -234,7 +234,7 @@ mod tests {
     use super::*;
 
     const OUTER_W: NonZero<u32> = NonZero::new(10).unwrap();
-    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
+    const WIDTH_U32: NonZero<u32> = NonZero::new(10u32).unwrap();
 
     #[test]
     fn range_crossing_row_boundary_but_exceets_roi_height() -> TestResult {

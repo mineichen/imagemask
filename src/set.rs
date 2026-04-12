@@ -37,9 +37,8 @@ pub trait ImaskSet: Iterator + Sized + ImageDimension {
     /// If the previous RowIterator is kept when getting the next RowIterator
     fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
         self,
-        old_image_width: <R::Item as SignedNonZeroable>::NonZero,
     ) -> ChunkByRowRanges<Self, R> {
-        ChunkByRowRanges::new(self, old_image_width)
+        ChunkByRowRanges::new(self)
     }
 
     fn inspect_bounds<R>(self) -> BoundsInspector<Self, R>

@@ -1,24 +1,22 @@
 use std::{cell::RefCell, marker::PhantomData, num::NonZero, rc::Rc};
 
-use crate::{CreateRange, ImageDimension, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, SignedNonZeroable, UncheckedCast};
 
 /// result of
-pub struct ChunkByRowRanges<T: Iterator, R: CreateRange<Item: SignedNonZeroable>> {
+pub struct ChunkByRowRanges<T: Iterator, R> {
     shared: Rc<RefCell<Shared<T>>>,
-    image_width: <R::Item as SignedNonZeroable>::NonZero,
     range: PhantomData<R>,
 }
 
-impl<T: Iterator, R: CreateRange<Item: SignedNonZeroable>> ChunkByRowRanges<T, R> {
+impl<T: Iterator, R: CreateRange> ChunkByRowRanges<T, R> {
     /// # Panics
     /// If the previous RowIterator is kept when getting the next RowIterator
-    pub(crate) fn new(source: T, old_image_width: <R::Item as SignedNonZeroable>::NonZero) -> Self {
+    pub(crate) fn new(source: T) -> Self {
         ChunkByRowRanges {
             shared: Rc::new(RefCell::new(Shared {
                 source,
                 pending_nextline: None,
             })),
-            image_width: old_image_width,
             range: PhantomData,
         }
     }
@@ -31,7 +29,7 @@ struct Shared<T: Iterator> {
 
 impl<T, R> Iterator for ChunkByRowRanges<T, R>
 where
-    T: Iterator<Item = R>,
+    T: Iterator<Item = R> + ImageDimension,
     R: CreateRange,
     R::Item: Copy
         + Ord
@@ -39,6 +37,7 @@ where
         + std::ops::Sub<Output = R::Item>
         + std::ops::Div<Output = R::Item>
         + std::ops::Mul<Output = R::Item>,
+    u32: UncheckedCast<R::Item>,
 {
     type Item = (R::Item, ChunkByRowRangesRowIter<T, R>);
 
@@ -49,7 +48,7 @@ where
         );
 
         let mut shared = self.shared.borrow_mut();
-        let width: R::Item = self.image_width.into();
+        let width: R::Item = shared.source.width().get().cast_unchecked();
 
         let range = shared
             .pending_nextline
@@ -174,14 +173,13 @@ mod tests {
 
     use super::*;
     use crate::{ImageDimension, WithBounds};
-    const NON_ZERO_TEN: NonZero<usize> = NonZero::new(10).unwrap();
-    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
+    const WIDTH_U32: NonZero<u32> = NonZero::new(10u32).unwrap();
 
     #[test]
     fn split_without_linebreak() {
         let source = [0..4, 5..10, 11..20];
         let source = WithBounds::new(source.into_iter(), WIDTH_U32);
-        let chunked = ChunkByRowRanges::<_, Range<usize>>::new(source, NON_ZERO_TEN);
+        let chunked = ChunkByRowRanges::<_, Range<usize>>::new(source);
         assert_eq!(chunked.width(), WIDTH_U32);
         let sums = chunked
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
@@ -191,7 +189,8 @@ mod tests {
     #[test]
     fn split_with_linebreak() {
         let source = [0..20];
-        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
+        let source = WithBounds::new(source.into_iter(), WIDTH_U32);
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source)
             .map(|(row, i)| (row, i.map(|x| x.len()).sum::<usize>()))
             .collect::<Vec<_>>();
         assert_eq!(sums, vec!((0, 10), (1, 10)));
@@ -200,7 +199,7 @@ mod tests {
     fn split_with_filtered() {
         let source = [0..3, 6..11, 12..20];
         let source = WithBounds::new(source.into_iter(), WIDTH_U32);
-        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source, NON_ZERO_TEN)
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source)
             .skip(1)
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
@@ -209,7 +208,8 @@ mod tests {
     #[test]
     fn split_with_filtered_empty() {
         let source = [0..3, 4..5, 6..11, 12..20];
-        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source.into_iter(), NON_ZERO_TEN)
+        let source = WithBounds::new(source.into_iter(), WIDTH_U32);
+        let sums = ChunkByRowRanges::<_, Range<usize>>::new(source)
             .skip(1)
             .map(|(row, i)| (row, i.map(|x| x.len()).sum::<usize>()))
             .collect::<Vec<_>>();
