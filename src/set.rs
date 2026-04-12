@@ -2,14 +2,13 @@ use std::{
     fmt::{Debug, Display},
     io,
     num::NonZero,
-    ops::{Add, Div, Rem, Sub},
+    ops::{Add, Sub},
 };
 
 fn invalid_data<T: Display>(e: T) -> std::io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e.to_string())
 }
 use crate::{CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
-use num_traits::One;
 
 mod bounds_inspector;
 mod chunk_by_row;
@@ -43,23 +42,11 @@ pub trait ImaskSet: Iterator + Sized + ImageDimension {
         ChunkByRowRanges::new(self, old_image_width)
     }
 
-    fn inspect_bounds<R>(
-        self,
-        image_width: <R::Item as SignedNonZeroable>::NonZero,
-    ) -> BoundsInspector<Self, R>
+    fn inspect_bounds<R>(self) -> BoundsInspector<Self, R>
     where
         R: CreateRange<Item: SignedNonZeroable>,
-        R::Item: num_traits::Bounded
-            + Copy
-            + Ord
-            + num_traits::Zero
-            + One
-            + Add<Output = R::Item>
-            + Sub<Output = R::Item>
-            + Rem<Output = R::Item>
-            + Div<Output = R::Item>,
     {
-        BoundsInspector::new(self, image_width)
+        BoundsInspector::new(self)
     }
 
     fn try_clip_2d(

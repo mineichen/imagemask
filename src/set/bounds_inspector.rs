@@ -1,68 +1,69 @@
-use std::{iter::FusedIterator, marker::PhantomData, num::NonZero};
+use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData, num::NonZero};
 
 use num_traits::{Bounded, One, Zero};
 
-use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, Rect, UncheckedCast};
 
 #[cfg(feature = "range-set-blaze-0_5")]
 use std::ops::RangeInclusive;
 
-pub struct BoundsInspector<T, R: CreateRange> {
+pub struct BoundsInspector<T, R> {
     parent: T,
-    width: <R::Item as SignedNonZeroable>::NonZero,
     _range: PhantomData<R>,
-    min_column: R::Item,
-    max_column: R::Item,
-    min_row: R::Item,
-    max_row: R::Item,
+    min_column: u32,
+    max_column: u32,
+    min_row: u32,
+    max_row: u32,
+}
+
+impl<T, R> Debug for BoundsInspector<T, R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundsInspector")
+            .field("min_column", &self.min_column)
+            .field("max_column", &self.max_column)
+            .field("min_row", &self.min_row)
+            .field("max_row", &self.max_row)
+            .finish()
+    }
 }
 
 impl<T, R> BoundsInspector<T, R>
 where
     T: Iterator,
     R: CreateRange,
-    R::Item: Bounded
-        + Copy
-        + Ord
-        + Zero
-        + One
-        + std::ops::Add<Output = R::Item>
-        + std::ops::Sub<Output = R::Item>
-        + std::ops::Rem<Output = R::Item>
-        + std::ops::Div<Output = R::Item>,
 {
-    pub fn new(parent: T, width: <R::Item as SignedNonZeroable>::NonZero) -> Self {
+    pub fn new(parent: T) -> Self {
         BoundsInspector {
             parent,
-            width,
             _range: PhantomData,
-            min_column: R::Item::max_value(),
-            max_column: R::Item::min_value(),
-            min_row: R::Item::max_value(),
-            max_row: R::Item::min_value(),
+            min_column: u32::MAX,
+            max_column: u32::MIN,
+            min_row: u32::MAX,
+            max_row: u32::MIN,
         }
     }
 
-    pub fn bounds(&self) -> Option<Rect<R::Item>> {
+    pub fn bounds(&self) -> Option<Rect<u32>> {
+        dbg!(self);
         if self.max_row < self.min_row {
             return None;
         }
 
-        let width = self.max_column - self.min_column + R::Item::one();
-        let height = self.max_row - self.min_row + R::Item::one();
+        let width = self.max_column + 1;
+        let height = self.max_row - self.min_row + 1;
 
         Some(Rect::new(
             self.min_column,
             self.min_row,
-            R::Item::create_non_zero(width).expect("width should be non-zero"),
-            R::Item::create_non_zero(height).expect("height should be non-zero"),
+            NonZero::new(width).expect("width should be non-zero"),
+            NonZero::new(height).expect("height should be non-zero"),
         ))
     }
 }
 
 impl<T, R> Iterator for BoundsInspector<T, R>
 where
-    T: Iterator<Item = R>,
+    T: Iterator<Item = R> + ImageDimension,
     R: CreateRange,
     R::Item: Bounded
         + Copy
@@ -71,7 +72,9 @@ where
         + std::ops::Div<Output = R::Item>
         + std::ops::Sub<Output = R::Item>
         + Zero
-        + One,
+        + One
+        + UncheckedCast<u32>,
+    u32: UncheckedCast<R::Item>,
 {
     type Item = R;
 
@@ -80,48 +83,39 @@ where
 
         let start = item.start();
         let end = item.end();
-        let width_val: R::Item = self.width.into();
+        let width_u32 = self.parent.width().get();
+        let width_val: R::Item = width_u32.cast_unchecked();
 
-        let start_row = start / width_val;
-        let start_col = start % width_val;
+        let start_row = (start / width_val).cast_unchecked();
+        let start_col = (start % width_val).cast_unchecked();
 
         let last = end - R::Item::one();
-        let end_row = last / width_val;
-        let end_col = last % width_val;
+        let end_row = (last / width_val).cast_unchecked();
+        let end_col = (last % width_val).cast_unchecked();
 
         self.min_row = self.min_row.min(start_row);
         self.max_row = self.max_row.max(end_row);
 
         if start_row == end_row {
+            println!("Equal");
             self.min_column = self.min_column.min(start_col);
             self.max_column = self.max_column.max(end_col);
         } else {
-            self.min_column = R::Item::zero();
-            self.max_column = width_val - R::Item::one();
+            println!("Not Equal {}", width_u32);
+            self.min_column = 0;
+            self.max_column = width_u32 - 1;
         }
 
         Some(item)
     }
 }
 
-impl<T, R> FusedIterator for BoundsInspector<T, R>
-where
-    T: FusedIterator<Item = R>,
-    R: CreateRange,
-    R::Item: Bounded
-        + Copy
-        + Ord
-        + std::ops::Rem<Output = R::Item>
-        + std::ops::Div<Output = R::Item>
-        + std::ops::Sub<Output = R::Item>
-        + Zero
-        + One,
-{
-}
+impl<T, R: CreateRange> FusedIterator for BoundsInspector<T, R> where BoundsInspector<T, R>: Iterator
+{}
 
 impl<T, R> ImageDimension for BoundsInspector<T, R>
 where
-    T: Iterator<Item = R> + ImageDimension,
+    T: Iterator + ImageDimension,
     R: CreateRange,
 {
     fn width(&self) -> NonZero<u32> {
@@ -137,31 +131,18 @@ mod range_set_blaze_0_5_interop {
 
     impl<T, TRangeItem> SortedStarts<TRangeItem> for BoundsInspector<T, RangeInclusive<TRangeItem>>
     where
-        T: SortedStarts<TRangeItem>,
-        TRangeItem: Integer
-            + Bounded
-            + Zero
-            + One
-            + SignedNonZeroable
-            + std::ops::Add<Output = TRangeItem>
-            + std::ops::Sub<Output = TRangeItem>
-            + std::ops::Rem<Output = TRangeItem>
-            + std::ops::Div<Output = TRangeItem>,
+        TRangeItem: Integer,
+        RangeInclusive<TRangeItem>: CreateRange,
+        BoundsInspector<T, RangeInclusive<TRangeItem>>:
+            FusedIterator<Item = RangeInclusive<TRangeItem>>,
     {
     }
 
     impl<T, TRangeItem> SortedDisjoint<TRangeItem> for BoundsInspector<T, RangeInclusive<TRangeItem>>
     where
-        T: SortedDisjoint<TRangeItem>,
-        TRangeItem: Integer
-            + Bounded
-            + Zero
-            + One
-            + SignedNonZeroable
-            + std::ops::Add<Output = TRangeItem>
-            + std::ops::Sub<Output = TRangeItem>
-            + std::ops::Rem<Output = TRangeItem>
-            + std::ops::Div<Output = TRangeItem>,
+        TRangeItem: Integer,
+        RangeInclusive<TRangeItem>: CreateRange,
+        BoundsInspector<T, RangeInclusive<TRangeItem>>: SortedStarts<TRangeItem>,
     {
     }
 }
@@ -170,26 +151,20 @@ mod range_set_blaze_0_5_interop {
 mod tests {
     use std::{num::NonZero, ops::Range};
 
+    use range_set_blaze_0_5::SortedDisjoint;
+
     use super::*;
     use crate::{ImageDimension, WithBounds};
 
-    const NON_ZERO_TEN: NonZero<usize> = NonZero::new(10).unwrap();
-    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
+    const WIDTH_U32: NonZero<u32> = NonZero::new(10u32).unwrap();
 
     #[test]
     fn single_range_crossing_image_width() {
-        let source = WithBounds::new([1..28usize].into_iter(), WIDTH_U32);
-        let mut inspector = BoundsInspector::<_, Range<usize>>::new(source, NON_ZERO_TEN);
+        let source = WithBounds::new([2..27usize].into_iter(), WIDTH_U32);
+        let mut inspector = BoundsInspector::<_, Range<usize>>::new(source);
         assert_eq!(1, (&mut inspector).count());
-        assert_eq!(
-            inspector.bounds(),
-            Some(Rect::new(
-                0usize,
-                0,
-                NonZero::new(10).unwrap(),
-                NonZero::new(3).unwrap()
-            ))
-        );
+        let b = const { Rect::new(0, 0, NonZero::new(10).unwrap(), NonZero::new(3).unwrap()) };
+        assert_eq!(inspector.bounds(), Some(b));
         assert_eq!(inspector.width(), WIDTH_U32);
     }
 
@@ -197,18 +172,11 @@ mod tests {
     fn multiple_ranges_with_different_lengths_and_row_gaps() {
         let source = [3..6usize, 30..33, 55..65];
         let source = WithBounds::new(source.into_iter(), WIDTH_U32);
-        let mut inspector = BoundsInspector::<_, Range<usize>>::new(source, NON_ZERO_TEN);
+        let mut inspector = BoundsInspector::<_, Range<usize>>::new(source);
         let count = (&mut inspector).count();
         assert_eq!(count, 3);
-        assert_eq!(
-            inspector.bounds(),
-            Some(Rect::new(
-                0usize,
-                0,
-                NonZero::new(10).unwrap(),
-                NonZero::new(7).unwrap()
-            ))
-        );
+        let b = const { Rect::new(0, 0, NonZero::new(10).unwrap(), NonZero::new(7).unwrap()) };
+        assert_eq!(inspector.bounds(), Some(b));
         assert_eq!(inspector.width(), WIDTH_U32);
     }
 
@@ -216,8 +184,16 @@ mod tests {
     fn empty_iterator_returns_none() {
         let source: [Range<usize>; 0] = [];
         let source = WithBounds::new(source.into_iter(), WIDTH_U32);
-        let inspector = BoundsInspector::<_, Range<usize>>::new(source, NON_ZERO_TEN);
+        let inspector = BoundsInspector::<_, Range<usize>>::new(source);
         assert_eq!(inspector.bounds(), None);
         assert_eq!(inspector.width(), WIDTH_U32);
+    }
+
+    #[cfg(feature = "range-set-blaze-0_5")]
+    fn _impl_disjoint(
+        inspector: BoundsInspector<impl SortedDisjoint<u32> + ImageDimension, RangeInclusive<u32>>,
+    ) {
+        fn implements(_: impl SortedDisjoint<u32>) {}
+        implements(inspector);
     }
 }
