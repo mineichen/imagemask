@@ -110,8 +110,12 @@ where
     }
 }
 
-impl<T, R: CreateRange> FusedIterator for BoundsInspector<T, R> where BoundsInspector<T, R>: Iterator
-{}
+impl<T, R: CreateRange> FusedIterator for BoundsInspector<T, R>
+where
+    BoundsInspector<T, R>: Iterator,
+    T: FusedIterator,
+{
+}
 
 impl<T, R> ImageDimension for BoundsInspector<T, R>
 where

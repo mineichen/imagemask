@@ -13,21 +13,20 @@ pub struct RoiWidthExceedsOriginal {
     pub total: u32,
 }
 
-pub struct Clip2dIter<T, R: CreateRange> {
+pub struct Clip2dIter<T, R> {
     parent: T,
     roi: Rect<u32>,
-    outer_width: <R::Item as SignedNonZeroable>::NonZero,
     _range: PhantomData<R>,
 }
 
-impl<T: Iterator, R: CreateRange<Item: Debug>> Debug for Clip2dIter<T, R>
+impl<T: Iterator + ImageDimension, R: CreateRange<Item: Debug>> Debug for Clip2dIter<T, R>
 where
     <R::Item as SignedNonZeroable>::NonZero: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Clip2dIter")
             .field("sub", &self.roi)
-            .field("outer_width", &self.outer_width)
+            .field("outer_width", &self.width())
             .finish()
     }
 }
@@ -38,13 +37,8 @@ where
     R: CreateRange<Item: Copy + Ord + std::ops::Add<Output = R::Item>>,
     u32: UncheckedCast<R::Item>,
 {
-    pub fn try_new(
-        parent: T,
-        roi: Rect<u32>,
-        outer_width: NonZero<u32>,
-    ) -> Result<Self, RoiWidthExceedsOriginal> {
-        assert_eq!(outer_width, parent.width());
-        let orig_w = outer_width.get();
+    pub fn try_new(parent: T, roi: Rect<u32>) -> Result<Self, RoiWidthExceedsOriginal> {
+        let orig_w = parent.width().get();
         let roi_w = roi.width.get();
         let total = roi.x + roi_w;
         if total > orig_w {
@@ -58,10 +52,6 @@ where
         Ok(Self {
             parent,
             roi,
-            outer_width: <R::Item as SignedNonZeroable>::create_non_zero(
-                outer_width.get().cast_unchecked(),
-            )
-            .expect("Not yet implemented correctly"),
             _range: PhantomData,
         })
     }
@@ -69,7 +59,7 @@ where
 
 impl<T, R> Iterator for Clip2dIter<T, R>
 where
-    T: Iterator<Item = R>,
+    T: Iterator<Item = R> + ImageDimension,
     R: CreateRange<
         Item: Copy
                   + Ord
@@ -86,7 +76,7 @@ where
     type Item = R;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let outer_w: R::Item = self.outer_width.into();
+        let outer_w: R::Item = self.parent.width().get().cast_unchecked();
         let sub_w: R::Item = self.roi.width.get().cast_unchecked();
         let sub_x = self.roi.x.cast_unchecked();
         let sub_y = self.roi.y.cast_unchecked();
@@ -154,24 +144,13 @@ where
 impl<T, R> FusedIterator for Clip2dIter<T, R>
 where
     T: FusedIterator<Item = R>,
-    R: CreateRange<
-        Item: Copy
-                  + Ord
-                  + Zero
-                  + One
-                  + std::ops::Sub<Output = R::Item>
-                  + std::ops::Add<Output = R::Item>
-                  + std::ops::Mul<Output = R::Item>
-                  + std::ops::Div<Output = R::Item>
-                  + std::ops::Rem<Output = R::Item>,
-    >,
-    u32: UncheckedCast<R::Item>,
+    Clip2dIter<T, R>: Iterator,
 {
 }
 
 impl<T, R> ImageDimension for Clip2dIter<T, R>
 where
-    T: Iterator<Item = R> + ImageDimension,
+    T: Iterator + ImageDimension,
     R: CreateRange,
 {
     fn width(&self) -> NonZero<u32> {
@@ -188,37 +167,31 @@ mod range_set_blaze_impl {
 
     impl<T, TRangeItem> SortedStarts<TRangeItem> for Clip2dIter<T, RangeInclusive<TRangeItem>>
     where
-        T: SortedStarts<TRangeItem>,
-        TRangeItem: Integer
-            + Copy
-            + Ord
-            + Zero
-            + One
-            + SignedNonZeroable
-            + std::ops::Add<Output = TRangeItem>
-            + std::ops::Sub<Output = TRangeItem>
-            + std::ops::Mul<Output = TRangeItem>
-            + std::ops::Div<Output = TRangeItem>
-            + std::ops::Rem<Output = TRangeItem>,
-        u32: UncheckedCast<TRangeItem>,
+        TRangeItem: Integer,
+        RangeInclusive<TRangeItem>: CreateRange,
+        Clip2dIter<T, RangeInclusive<TRangeItem>>: FusedIterator<Item = RangeInclusive<TRangeItem>>,
+        // where
+        //     T: SortedStarts<TRangeItem>,
+        //     TRangeItem: Integer
+        //         + Copy
+        //         + Ord
+        //         + Zero
+        //         + One
+        //         + SignedNonZeroable
+        //         + std::ops::Add<Output = TRangeItem>
+        //         + std::ops::Sub<Output = TRangeItem>
+        //         + std::ops::Mul<Output = TRangeItem>
+        //         + std::ops::Div<Output = TRangeItem>
+        //         + std::ops::Rem<Output = TRangeItem>,
+        //     u32: UncheckedCast<TRangeItem>,
     {
     }
 
     impl<T, TRangeItem> SortedDisjoint<TRangeItem> for Clip2dIter<T, RangeInclusive<TRangeItem>>
     where
-        T: SortedDisjoint<TRangeItem>,
-        TRangeItem: Integer
-            + Copy
-            + Ord
-            + Zero
-            + One
-            + SignedNonZeroable
-            + std::ops::Add<Output = TRangeItem>
-            + std::ops::Sub<Output = TRangeItem>
-            + std::ops::Mul<Output = TRangeItem>
-            + std::ops::Div<Output = TRangeItem>
-            + std::ops::Rem<Output = TRangeItem>,
-        u32: UncheckedCast<TRangeItem>,
+        TRangeItem: Integer,
+        RangeInclusive<TRangeItem>: CreateRange,
+        Clip2dIter<T, RangeInclusive<TRangeItem>>: FusedIterator<Item = RangeInclusive<TRangeItem>>,
     {
     }
 }
@@ -240,7 +213,7 @@ mod tests {
     fn range_crossing_row_boundary_but_exceets_roi_height() -> TestResult {
         let sub = Rect::new(3, 1, NonZero::new(4).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([12..25usize].into_iter(), WIDTH_U32);
-        let result: Vec<_> = source.try_clip_2d(sub, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(sub)?.collect();
         assert_eq!(result, vec![0..6,]);
         Ok(())
     }
@@ -249,7 +222,7 @@ mod tests {
     fn adjacent_across_row_boundary() -> TestResult {
         let sub = Rect::new(0, 0, NonZero::new(10).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([5..25usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.into_iter().try_clip_2d(sub, OUTER_W)?.collect();
+        let result: Vec<_> = source.into_iter().try_clip_2d(sub)?.collect();
         assert_eq!(result, vec![5..20]);
         Ok(())
     }
@@ -258,7 +231,7 @@ mod tests {
     fn range_entirely_outside_is_skipped() -> TestResult {
         let sub = Rect::new(3, 1, NonZero::new(4).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([0..3usize].into_iter(), OUTER_W);
-        assert_eq!(source.try_clip_2d(sub, OUTER_W)?.count(), 0);
+        assert_eq!(source.try_clip_2d(sub)?.count(), 0);
         Ok(())
     }
 
@@ -268,7 +241,7 @@ mod tests {
         let sub = Rect::new(3, 1, new_width, NonZero::new(2).unwrap());
         let source = [12..18usize];
         let source = WithBounds::new(source.into_iter(), WIDTH_U32);
-        let clipped = source.try_clip_2d(sub, OUTER_W)?;
+        let clipped = source.try_clip_2d(sub)?;
         assert_eq!(clipped.width(), new_width);
         let result: Vec<_> = clipped.collect();
         assert_eq!(result, vec![0..4]);
@@ -279,7 +252,7 @@ mod tests {
     fn single_pixel_range() -> TestResult {
         let sub = Rect::new(3, 1, NonZero::new(4).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([24..25usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(sub, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(sub)?.collect();
         assert_eq!(result, vec![5..6]);
         Ok(())
     }
@@ -288,7 +261,7 @@ mod tests {
     fn clip_full_width() -> TestResult {
         let sub = Rect::new(0, 1, OUTER_W, NonZero::new(2).unwrap());
         let source = WithBounds::new([24..25usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(sub, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(sub)?.collect();
         assert_eq!(result, vec![14..15usize]);
         Ok(())
     }
@@ -297,7 +270,7 @@ mod tests {
     fn try_new_succeeds_when_roi_fits() -> TestResult {
         let roi = Rect::new(3, 1, NonZero::new(4).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([12..18usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..4]);
         Ok(())
     }
@@ -306,7 +279,7 @@ mod tests {
     fn try_new_fails_when_roi_exceeds_width() {
         let roi = Rect::new(8u32, 0, NonZero::new(5).unwrap(), NonZero::new(1).unwrap());
         let source = WithBounds::new([0..10usize].into_iter(), OUTER_W);
-        let err = Clip2dIter::<_, Range<usize>>::try_new(source, roi, OUTER_W).unwrap_err();
+        let err = Clip2dIter::<_, Range<usize>>::try_new(source, roi).unwrap_err();
         assert_eq!(err.roi_x, 8);
         assert_eq!(err.roi_width, 5);
         assert_eq!(err.orig_width, 10);
@@ -317,7 +290,7 @@ mod tests {
     fn multiple_disjoint_ranges() -> TestResult {
         let roi = Rect::new(2, 0, NonZero::new(3).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([2..5usize, 12..15, 22..25].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..3, 3..6]);
         Ok(())
     }
@@ -326,7 +299,7 @@ mod tests {
     fn range_spanning_multiple_rows() -> TestResult {
         let roi = Rect::new(0, 1, NonZero::new(10).unwrap(), NonZero::new(3).unwrap());
         let source = WithBounds::new([5..35usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..25]);
         Ok(())
     }
@@ -335,7 +308,7 @@ mod tests {
     fn range_partially_inside_roi_left() -> TestResult {
         let roi = Rect::new(5, 0, NonZero::new(5).unwrap(), NonZero::new(1).unwrap());
         let source = WithBounds::new([2..8usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..3]);
         Ok(())
     }
@@ -344,7 +317,7 @@ mod tests {
     fn range_partially_inside_roi_right() -> TestResult {
         let roi = Rect::new(2, 0, NonZero::new(5).unwrap(), NonZero::new(1).unwrap());
         let source = WithBounds::new([5..12usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.into_iter().try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.into_iter().try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![3..5]);
         Ok(())
     }
@@ -353,7 +326,7 @@ mod tests {
     fn empty_iterator() -> TestResult {
         let roi = Rect::new(0, 0, OUTER_W, NonZero::new(1).unwrap());
         let source = WithBounds::new(std::iter::empty::<Range<usize>>(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert!(result.is_empty());
         Ok(())
     }
@@ -362,7 +335,7 @@ mod tests {
     fn roi_at_origin() -> TestResult {
         let roi = Rect::new(0, 0, NonZero::new(5).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([0..20usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..10]);
         Ok(())
     }
@@ -371,7 +344,7 @@ mod tests {
     fn roi_exactly_image_bounds() -> TestResult {
         let roi = Rect::new(0, 0, OUTER_W, NonZero::new(3).unwrap());
         let source = WithBounds::new([0..30usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..30]);
         Ok(())
     }
@@ -380,7 +353,7 @@ mod tests {
     fn ranges_before_and_after_roi() -> TestResult {
         let roi = Rect::new(0, 1, OUTER_W, NonZero::new(1).unwrap());
         let source = WithBounds::new([0..5usize, 20..25].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert!(result.is_empty());
         Ok(())
     }
@@ -389,7 +362,7 @@ mod tests {
     fn single_pixel_at_roi_corner() -> TestResult {
         let roi = Rect::new(5, 2, NonZero::new(3).unwrap(), NonZero::new(2).unwrap());
         let source = WithBounds::new([27..28usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![2..3]);
         Ok(())
     }
@@ -398,7 +371,7 @@ mod tests {
     fn range_clipped_to_single_pixel() -> TestResult {
         let roi = Rect::new(9, 0, NonZero::new(1).unwrap(), NonZero::new(1).unwrap());
         let source = WithBounds::new([8..12usize].into_iter(), OUTER_W);
-        let result: Vec<_> = source.try_clip_2d(roi, OUTER_W)?.collect();
+        let result: Vec<_> = source.try_clip_2d(roi)?.collect();
         assert_eq!(result, vec![0..1]);
         Ok(())
     }
