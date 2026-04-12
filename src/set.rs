@@ -556,4 +556,17 @@ mod tests {
             .collect();
         assert_eq!(with_bigger, vec![20..30, 40..50, 60..70]);
     }
+
+    #[test]
+    fn iter_global_with_multiple_in_same_line() {
+        let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(
+            [0u32..1, 3..4, 8..11, 13..14, 19..21].with_bounds(NonZero::new(20u32).unwrap()),
+        )
+        .unwrap();
+
+        let with_smaller: Vec<_> = ranges
+            .iter_global_with::<Range<u32>>(NonZero::new(10u32).unwrap())
+            .collect();
+        assert_eq!(with_smaller, vec![0u32..1, 3..4, 8..11]);
+    }
 }

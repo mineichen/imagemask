@@ -96,21 +96,8 @@ where
     }
 }
 
-impl<TI, TE, TOut> FusedIterator for SortedRangesIterGlobal<TI, TE, TOut>
-where
-    TI: Iterator<Item: UncheckedCast<TOut::Item>>,
-    TE: Iterator<Item: UncheckedCast<TOut::Item>>,
-    TOut: CreateRange<
-        Item: Copy
-                  + Default
-                  + SignedNonZeroable
-                  + Add<Output = TOut::Item>
-                  + Sub<Output = TOut::Item>
-                  + Mul<Output = TOut::Item>
-                  + Div<Output = TOut::Item>
-                  + Rem<Output = TOut::Item>
-                  + Ord,
-    >,
+impl<TI, TE, TOut: CreateRange> FusedIterator for SortedRangesIterGlobal<TI, TE, TOut> where
+    Self: Iterator
 {
 }
 

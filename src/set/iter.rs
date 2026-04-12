@@ -59,11 +59,10 @@ where
     }
 }
 
-impl<TIncluded, TExcluded, TOut> FusedIterator for SortedRangesIter<TIncluded, TExcluded, TOut>
+impl<TIncluded, TExcluded, TOut: CreateRange> FusedIterator
+    for SortedRangesIter<TIncluded, TExcluded, TOut>
 where
-    TIncluded: Iterator<Item: UncheckedCast<TOut::Item>>,
-    TExcluded: Iterator<Item: UncheckedCast<TOut::Item>>,
-    TOut: CreateRange<Item: Copy + SignedNonZeroable + std::ops::Add<Output = TOut::Item>>,
+    Self: Iterator,
 {
 }
 
@@ -90,14 +89,12 @@ mod range_set_blaze_0_5_interop {
     impl<TIncluded, TExcluded, T> SortedDisjoint<T>
         for SortedRangesIter<TIncluded, TExcluded, RangeInclusive<T>>
     where
-        TIncluded: FusedIterator<Item: UncheckedCast<T>>,
-        TExcluded: Iterator<Item: UncheckedCast<T>>,
-        T: Copy
+        Self: SortedStarts<T>,
+        T: Integer
             + SignedNonZeroable
             + std::ops::Add<Output = T>
             + std::ops::Sub<Output = T>
-            + num_traits::One
-            + Integer,
+            + num_traits::One,
     {
     }
 }

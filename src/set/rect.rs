@@ -66,10 +66,8 @@ where
         }
     }
 }
-impl<T, R> FusedIterator for RectIterator<T, R>
-where
-    T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd,
-    R: CreateRange<Item = T>,
+impl<T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd, R: CreateRange<Item = T>>
+    FusedIterator for RectIterator<T, R>
 {
 }
 
@@ -123,10 +121,8 @@ where
         }
     }
 }
-impl<T, R> FusedIterator for PartialWidthRectIterator<T, R>
-where
-    T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd,
-    R: CreateRange<Item = T>,
+impl<T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd, R: CreateRange<Item = T>>
+    FusedIterator for PartialWidthRectIterator<T, R>
 {
 }
 
@@ -143,8 +139,8 @@ mod range_set_blaze_interop {
         T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd
     {
     }
-    impl<T> SortedDisjoint<T> for PartialWidthRectIterator<T, RangeInclusive<T>> where
-        T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd
+    impl<T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd>
+        SortedDisjoint<T> for PartialWidthRectIterator<T, RangeInclusive<T>>
     {
     }
     impl<T> SortedStarts<T> for PartialWidthRectIterator<T, RangeInclusive<T>> where

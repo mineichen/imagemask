@@ -59,14 +59,11 @@ where
     }
 }
 
-impl<TIncluded, TExcluded, TMeta, TRange> FusedIterator
+impl<TIncluded, TExcluded, TMeta, TRange: CreateRange> FusedIterator
     for SortedRangesMapIter<TIncluded, TExcluded, TMeta, TRange>
 where
-    TIncluded: FusedIterator<Item: UncheckedCast<TRange::Item>>,
-    TExcluded: Iterator<Item: UncheckedCast<TRange::Item>>,
-    TMeta: Iterator,
-    TRange: CreateRange,
-    TRange::Item: SignedNonZeroable + Copy + std::ops::Add<Output = TRange::Item>,
+    Self: Iterator,
+    TIncluded: FusedIterator,
 {
 }
 

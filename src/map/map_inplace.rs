@@ -89,11 +89,8 @@ unsafe impl<TIncluded: Send, TExcluded: Send, TMeta: Send> Send
 {
 }
 
-impl<TIncluded, TExcluded, TMeta> FusedIterator for SourceIteratorMap<TIncluded, TExcluded, TMeta>
-where
-    TIncluded: UncheckedCast<u64>,
-    TExcluded: UncheckedCast<u64>,
-    TMeta: Clone,
+impl<TIncluded, TExcluded, TMeta> FusedIterator for SourceIteratorMap<TIncluded, TExcluded, TMeta> where
+    Self: Iterator
 {
 }
 

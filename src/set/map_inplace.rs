@@ -104,10 +104,8 @@ pub struct SourceIterator<TIncluded, TExcluded> {
     original_len: usize,
 }
 
-impl<TIncluded, TExcluded> FusedIterator for SourceIterator<TIncluded, TExcluded>
-where
-    TIncluded: UncheckedCast<u64>,
-    TExcluded: UncheckedCast<u64>,
+impl<TIncluded, TExcluded> FusedIterator for SourceIterator<TIncluded, TExcluded> where
+    Self: Iterator
 {
 }
 
