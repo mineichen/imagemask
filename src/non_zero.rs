@@ -237,7 +237,7 @@ impl<T: PartialOrd + Ord + Copy + Debug + Bounded> NonZeroRange<T> {
         let start = max(self.start, other.start);
         let end = min(self.end, other.end);
         if end > start {
-            Some(unsafe { Self::new_unchecked(RangeUnchecked { start, end }) })
+            Some(Self::new_unchecked(RangeUnchecked { start, end }))
         } else {
             None
         }
@@ -333,12 +333,15 @@ mod tests {
         test_both_way_overlap(3..7, 0..4, true);
     }
     fn test_both_way_overlap(a: Range<u32>, b: Range<u32>, expected: bool) {
-        assert_eq!(expected, unsafe {
-            NonZeroRange::new_unchecked(a.clone()).overlaps(&NonZeroRange::new_unchecked(b.clone()))
-        });
-        assert_eq!(expected, unsafe {
+        assert_eq!(
+            expected,
+            NonZeroRange::new_unchecked(a.clone())
+                .overlaps(&NonZeroRange::new_unchecked(b.clone()))
+        );
+        assert_eq!(
+            expected,
             NonZeroRange::new_unchecked(b).overlaps(&NonZeroRange::new_unchecked(a))
-        });
+        );
     }
 
     #[test]
@@ -372,15 +375,15 @@ mod tests {
     }
 
     fn test_intersection_both_ways(a: Range<u32>, b: Range<u32>, expected: Option<Range<u32>>) {
-        let a_nz = unsafe { NonZeroRange::new_unchecked(a.clone()) };
-        let b_nz = unsafe { NonZeroRange::new_unchecked(b.clone()) };
+        let a_nz = NonZeroRange::new_unchecked(a.clone());
+        let b_nz = NonZeroRange::new_unchecked(b.clone());
 
         let result_ab = a_nz.intersection(&b_nz);
         let result_ba = b_nz.intersection(&a_nz);
 
         match expected {
             Some(exp) => {
-                let exp_nz = unsafe { NonZeroRange::new_unchecked(exp) };
+                let exp_nz = NonZeroRange::new_unchecked(exp);
                 assert_eq!(result_ab, Some(exp_nz), "a intersection b");
                 assert_eq!(result_ba, Some(exp_nz), "b intersection a");
             }
