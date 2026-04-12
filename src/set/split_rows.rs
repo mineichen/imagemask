@@ -104,20 +104,20 @@ mod tests {
     use std::{num::NonZero, ops::Range};
 
     use super::*;
-    use crate::{ImageDimension, ImaskSet, WithBounds};
+    use crate::{ImageDimension, ImaskSet};
 
-    const WIDTH_U32: NonZero<u32> = unsafe { NonZero::new_unchecked(10u32) };
+    const WIDTH_U32: NonZero<u32> = NonZero::new(10u32).unwrap();
 
     #[test]
     fn range_within_single_row() {
-        let source = WithBounds::new([0..5usize], WIDTH_U32);
+        let source = [0..5usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = SplitRowsIter::new(source).collect();
         assert_eq!(result, vec![0..5]);
     }
 
     #[test]
     fn range_crossing_one_row_boundary() {
-        let source = WithBounds::new([5..15usize], WIDTH_U32);
+        let source = [5..15usize].with_bounds(WIDTH_U32);
         let split = SplitRowsIter::new(source);
         assert_eq!(split.width(), WIDTH_U32);
         let result: Vec<_> = split.collect();
@@ -126,63 +126,56 @@ mod tests {
 
     #[test]
     fn range_spanning_three_rows() {
-        let source = [0..25usize];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [0..25usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = SplitRowsIter::new(source).collect();
         assert_eq!(result, vec![0..10, 10..20, 20..25]);
     }
 
     #[test]
     fn range_exactly_one_row() {
-        let source = [10..20usize];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [10..20usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = SplitRowsIter::new(source).collect();
         assert_eq!(result, vec![10..20]);
     }
 
     #[test]
     fn multiple_ranges_some_crossing() {
-        let source = [0..3usize, 6..12, 15..20];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [0..3usize, 6..12, 15..20].with_bounds(WIDTH_U32);
         let result: Vec<_> = SplitRowsIter::new(source).collect();
         assert_eq!(result, vec![0..3, 6..10, 10..12, 15..20]);
     }
 
     #[test]
     fn empty_iterator() {
-        let source = WithBounds::new(std::iter::empty(), WIDTH_U32);
+        let source = std::iter::empty().with_bounds(WIDTH_U32);
         let result: Vec<Range<usize>> = SplitRowsIter::new(source).collect();
         assert!(result.is_empty());
     }
 
     #[test]
     fn single_pixel() {
-        let source = [5..6usize];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [5..6usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = source.split_rows().collect();
         assert_eq!(result, vec![5..6]);
     }
 
     #[test]
     fn single_pixel_at_row_boundary() {
-        let source = [10..11usize];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [10..11usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = source.split_rows().collect();
         assert_eq!(result, vec![10..11]);
     }
 
     #[test]
     fn range_starting_at_boundary_crossing_two_rows() {
-        let source = [10..25usize];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [10..25usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = source.split_rows().collect();
         assert_eq!(result, vec![10..20, 20..25]);
     }
 
     #[test]
     fn range_spanning_many_rows() {
-        let source = [3..97usize];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [3..97usize].with_bounds(WIDTH_U32);
         let result: Vec<_> = source.split_rows().collect();
         assert_eq!(
             result,

@@ -1,25 +1,26 @@
 use std::{iter::FusedIterator, num::NonZero};
 
+use futures_core::Stream;
+
 pub trait ImageDimension {
     fn width(&self) -> NonZero<u32>;
 }
 
-#[derive(Clone, Debug)]
-pub struct WithBounds<I> {
-    iter: I,
-    width: NonZero<u32>,
+pin_project_lite::pin_project! {
+    #[derive(Clone, Debug)]
+    pub struct WithBounds<I> {
+        #[pin] inner: I,
+        width: NonZero<u32>,
+    }
 }
 
 impl<I> WithBounds<I> {
-    pub fn new(iter: impl IntoIterator<IntoIter = I>, width: NonZero<u32>) -> Self {
-        Self {
-            iter: iter.into_iter(),
-            width,
-        }
+    pub fn new(inner: I, width: NonZero<u32>) -> Self {
+        Self { inner, width }
     }
 
     pub fn into_inner(self) -> I {
-        self.iter
+        self.inner
     }
 }
 
@@ -27,11 +28,23 @@ impl<I: Iterator> Iterator for WithBounds<I> {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        self.inner.next()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+        self.inner.size_hint()
+    }
+}
+
+impl<I: Stream> Stream for WithBounds<I> {
+    type Item = I::Item;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.project();
+        this.inner.poll_next(cx)
     }
 }
 

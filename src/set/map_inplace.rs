@@ -11,12 +11,12 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// Returns Some(SortedRanges) if non-empty, None if empty.
     /// ```
     /// use std::ops::RangeInclusive;
-    /// use imask::{Rect, SortedRanges, SourceIterator, WithBounds};
+    /// use imask::{Rect, SortedRanges, SourceIterator, ImaskSet};
     /// use std::num::NonZero;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let width = const { NonZero::new(1000u32).unwrap() };
-    /// let source = WithBounds::new([10u32..20, 30..45, 50..60], width);
+    /// let source = [10u32..20, 30..45, 50..60].with_bounds(width);
     /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(source)?;
     /// let ranges = ranges.map_inplace(|iter| {
     ///     iter.map(|x| {

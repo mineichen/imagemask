@@ -172,13 +172,12 @@ mod tests {
     use std::{num::NonZero, ops::Range};
 
     use super::*;
-    use crate::{ImageDimension, WithBounds};
+    use crate::{ImageDimension, ImaskSet};
     const WIDTH_U32: NonZero<u32> = NonZero::new(10u32).unwrap();
 
     #[test]
     fn split_without_linebreak() {
-        let source = [0..4, 5..10, 11..20];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [0..4, 5..10, 11..20].with_bounds(WIDTH_U32);
         let chunked = ChunkByRowRanges::<_, Range<usize>>::new(source);
         assert_eq!(chunked.width(), WIDTH_U32);
         let sums = chunked
@@ -188,8 +187,7 @@ mod tests {
     }
     #[test]
     fn split_with_linebreak() {
-        let source = [0..20];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [0..20].with_bounds(WIDTH_U32);
         let sums = ChunkByRowRanges::<_, Range<usize>>::new(source)
             .map(|(row, i)| (row, i.map(|x| x.len()).sum::<usize>()))
             .collect::<Vec<_>>();
@@ -197,8 +195,7 @@ mod tests {
     }
     #[test]
     fn split_with_filtered() {
-        let source = [0..3, 6..11, 12..20];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [0..3, 6..11, 12..20].with_bounds(WIDTH_U32);
         let sums = ChunkByRowRanges::<_, Range<usize>>::new(source)
             .skip(1)
             .map(|(row, i)| (row, i.collect::<Vec<_>>()))
@@ -207,8 +204,7 @@ mod tests {
     }
     #[test]
     fn split_with_filtered_empty() {
-        let source = [0..3, 4..5, 6..11, 12..20];
-        let source = WithBounds::new(source, WIDTH_U32);
+        let source = [0..3, 4..5, 6..11, 12..20].with_bounds(WIDTH_U32);
         let sums = ChunkByRowRanges::<_, Range<usize>>::new(source)
             .skip(1)
             .map(|(row, i)| (row, i.map(|x| x.len()).sum::<usize>()))

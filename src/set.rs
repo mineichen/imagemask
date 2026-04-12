@@ -1,14 +1,16 @@
 use std::{
     fmt::{Debug, Display},
     io,
-    num::{NonZero, NonZeroU32},
+    num::{NonZero, NonZeroU32, NonZeroU64},
     ops::{Add, Sub},
 };
 
 fn invalid_data<T: Display>(e: T) -> std::io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e.to_string())
 }
-use crate::{CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast};
+use crate::{
+    CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast, WithBounds,
+};
 
 mod bounds_inspector;
 mod chunk_by_row;
@@ -32,7 +34,7 @@ pub use rect::*;
 pub use sanitize_sorted_disjoint::*;
 pub use split_rows::*;
 
-pub trait ImaskSet: IntoIterator<IntoIter: ImageDimension> + Sized {
+pub trait ImaskSet: IntoIterator + Sized {
     /// # Panics
     /// If the previous RowIterator is kept when getting the next RowIterator
     fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
@@ -48,22 +50,30 @@ pub trait ImaskSet: IntoIterator<IntoIter: ImageDimension> + Sized {
     fn try_clip_2d(
         self,
         roi: Rect<u32>,
-    ) -> Result<Clip2dIter<Self::IntoIter, Self::Item>, RoiWidthExceedsOriginal> {
+    ) -> Result<Clip2dIter<Self::IntoIter, Self::Item>, RoiWidthExceedsOriginal>
+    where
+        Self::IntoIter: ImageDimension,
+    {
         Clip2dIter::try_new(self.into_iter(), roi)
     }
 
-    fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item> {
+    fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item>
+    where
+        Self::IntoIter: ImageDimension,
+    {
         SplitRowsIter::new(self.into_iter())
     }
 
-    fn sanitize_sorted_disjoint<R: CreateRange<Item: SignedNonZeroable> + Debug>(
-        self,
-    ) -> SanitizeSortedDisjoint<Self::IntoIter, R> {
+    fn sanitize_sorted_disjoint<R: Debug>(self) -> SanitizeSortedDisjoint<Self::IntoIter, R> {
         SanitizeSortedDisjoint::new(self.into_iter())
+    }
+
+    fn with_bounds(self, width: NonZeroU32) -> WithBounds<Self::IntoIter> {
+        WithBounds::new(self.into_iter(), width)
     }
 }
 
-impl<I: IntoIterator> ImaskSet for I where I::IntoIter: ImageDimension {}
+impl<I: IntoIterator> ImaskSet for I {}
 
 /// Represents areas on images. It's designed to efficiently support various image sizes.
 /// Both, TIncluded and TExcluded are expected to always be > 0. Use non-zero signed types
@@ -83,6 +93,7 @@ impl<TIncluded, TExcluded> Debug for SortedRanges<TIncluded, TExcluded> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NonEmptyOrderedRanges")
             .field("range_count", &self.included.len())
+            .field("bounds", &self.bounds)
             .finish()
     }
 }
@@ -138,6 +149,23 @@ where
             bounds,
         }
     }
+
+    fn build_global(self, width: NonZeroU32) -> io::Result<SortedRanges<TIncluded, TExcluded>> {
+        let height = u32::try_from(self.cur_pos / NonZeroU64::from(width) + 1)
+            .ok()
+            .and_then(NonZero::new)
+            .ok_or_else(|| io::Error::other("Height is > u32"))?;
+        Ok(SortedRanges {
+            included: self.included,
+            excluded: self.excluded,
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+        })
+    }
 }
 fn create_checked<T>(start: u64, end: u64) -> Result<T, io::Error>
 where
@@ -167,6 +195,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         }
     }
 
+    /// Collects
     pub fn try_from_ordered_iter<TIter>(iter: TIter) -> Result<Self, io::Error>
     where
         TIter: IntoIterator<Item: CreateRange<Item: TryInto<u64, Error: Display>>>,
@@ -175,13 +204,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         TExcluded: TryFrom<u64, Error: Display>,
     {
         let iter = iter.into_iter();
-        let bounds = Rect {
-            x: 0,
-            y: 0,
-            width: iter.width(),
-            height: NonZeroU32::MIN,
-        };
-        Self::try_from_ordered_iter_roi(iter, bounds)
+        let width = iter.width();
+        Self::try_from_ordered_iter_roi_internal(iter).and_then(|x| x.build_global(width))
     }
 
     pub fn try_from_ordered_iter_roi<TIter>(
@@ -195,6 +219,16 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     {
         assert!(bounds.x == 0);
         assert!(bounds.y == 0);
+        Self::try_from_ordered_iter_roi_internal(iter).map(|r| r.build(bounds))
+    }
+    fn try_from_ordered_iter_roi_internal<TIter>(
+        iter: TIter,
+    ) -> Result<Builder<TIncluded, TExcluded>, io::Error>
+    where
+        TIter: IntoIterator<Item: CreateRange<Item: TryInto<u64, Error: Display>>>,
+        TIncluded: TryFrom<u64, Error: Display>,
+        TExcluded: TryFrom<u64, Error: Display>,
+    {
         let mut iter = iter.into_iter();
         let Some(first_range) = iter.next() else {
             return Err(io::Error::new(
@@ -208,7 +242,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             builder.add(x)?;
         }
 
-        Ok(builder.build(bounds))
+        Ok(builder)
     }
 
     /// Returns the number of ranges
