@@ -142,6 +142,32 @@ where
         );
         self.excluded.push(create_checked(self.cur_pos, start_u64)?);
         self.included.push(create_checked(start_u64, end_u64)?);
+
+        // let gap = start_u64.checked_sub(self.cur_pos).ok_or_else(|| {
+        //     io::Error::new(
+        //         io::ErrorKind::InvalidData,
+        //         format!(
+        //             "start ({start_u64}) must be >= previous end ({})",
+        //             self.cur_pos
+        //         ),
+        //     )
+        // })?;
+        // let len: u64 = end_u64.checked_sub(start_u64).ok_or_else(|| {
+        //     io::Error::new(
+        //         io::ErrorKind::InvalidData,
+        //         format!("end ({end_u64}) must be > start ({start_u64})"),
+        //     )
+        // })?;
+        // if gap == 0 {
+        //     *self.included.last_mut().expect("at least one range") =
+        //         TIncluded::try_from(end_u64 - self.cur_included_start).map_err(invalid_data)?;
+        // } else {
+        //     self.excluded
+        //         .push(TExcluded::try_from(gap).map_err(invalid_data)?);
+        //     self.included
+        //         .push(TIncluded::try_from(len).map_err(invalid_data)?);
+        //     self.cur_included_start = start_u64;
+        // }
         self.cur_pos = end_u64;
         Ok(())
     }
@@ -220,8 +246,6 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
-        assert!(bounds.x == 0);
-        assert!(bounds.y == 0);
         Self::try_from_ordered_iter_roi_internal(iter).map(|r| r.build(bounds))
     }
     fn try_from_ordered_iter_roi_internal<TIter>(
@@ -506,8 +530,7 @@ mod tests {
         let rect = Rect::new(2u32, 1, NonZero::new(4).unwrap(), NonZero::new(3).unwrap());
         let global_width = NonZero::new(10u32).unwrap();
         let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(
-            rect.into_rect_iter::<std::ops::Range<u32>>(global_width)
-                .with_bounds(global_width),
+            rect.into_rect_iter::<std::ops::Range<u32>>(global_width),
         )
         .unwrap();
 
@@ -533,8 +556,7 @@ mod tests {
         let rect = Rect::new(0u32, 1, NonZero::new(10).unwrap(), NonZero::new(3).unwrap());
         let global_width = NonZero::new(10u32).unwrap();
         let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(
-            rect.into_rect_iter::<std::ops::Range<u32>>(global_width)
-                .with_bounds(global_width),
+            rect.into_rect_iter::<std::ops::Range<u32>>(global_width),
         )
         .unwrap();
         assert_eq!(1, ranges.included.len());
@@ -568,5 +590,28 @@ mod tests {
             .iter_global_with::<Range<u32>>(NonZero::new(10u32).unwrap())
             .collect();
         assert_eq!(with_smaller, vec![0u32..1, 3..4, 8..11]);
+    }
+
+    #[test]
+    fn clip_full_rect_produces_single_range() {
+        const GLOBAL_WIDTH: NonZeroU32 = NonZero::new(10u32).unwrap();
+        const RECT_SIZE: NonZeroU32 = NonZero::new(5).unwrap();
+        let rect = Rect::new(2u32, 2, RECT_SIZE, RECT_SIZE);
+
+        let ranges = rect
+            .into_rect_iter::<Range<u32>>(GLOBAL_WIDTH)
+            .try_clip_2d(rect)
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(1, ranges.len());
+        let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter_roi(
+            ranges.with_bounds(RECT_SIZE),
+            rect,
+        )
+        .unwrap();
+
+        assert_eq!(1, ranges.len());
+        let roi: Vec<_> = ranges.iter_roi::<Range<u64>>().collect();
+        assert_eq!(vec![0u64..25], roi);
     }
 }

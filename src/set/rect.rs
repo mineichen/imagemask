@@ -7,12 +7,23 @@ use std::{
 
 use num_traits::Zero;
 
-use crate::{CreateRange, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, SignedNonZeroable};
+
+pub struct RectIterator<T: SignedNonZeroable, R> {
+    pub kind: RectIteratorKind<T, R>,
+    width: T::NonZero,
+}
 
 #[derive(Clone)]
-pub enum RectIterator<T: SignedNonZeroable, R> {
+pub enum RectIteratorKind<T: SignedNonZeroable, R> {
     FullWidth(Once<R>),
     PartialWidth(PartialWidthRectIterator<T, R>),
+}
+
+impl<R> ImageDimension for RectIterator<u32, R> {
+    fn width(&self) -> std::num::NonZero<u32> {
+        self.width
+    }
 }
 
 impl<T, R> RectIterator<T, R>
@@ -34,8 +45,8 @@ where
         global_width: T::NonZero,
     ) -> Self {
         debug_assert!(width <= global_width);
-        if width < global_width {
-            Self::PartialWidth(PartialWidthRectIterator::new(
+        let kind = if width < global_width {
+            RectIteratorKind::PartialWidth(PartialWidthRectIterator::new(
                 x,
                 y,
                 width,
@@ -47,7 +58,11 @@ where
             let start = y * global_width.into();
             let len = T::create_non_zero(height.into() * global_width.into())
                 .expect("Only happens on overflow");
-            Self::FullWidth(std::iter::once(R::new_debug_checked(start, len)))
+            RectIteratorKind::FullWidth(std::iter::once(R::new_debug_checked(start, len)))
+        };
+        Self {
+            kind,
+            width: global_width,
         }
     }
 }
@@ -60,9 +75,20 @@ where
     type Item = R;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.kind.next()
+    }
+}
+impl<T, R> Iterator for RectIteratorKind<T, R>
+where
+    T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd,
+    R: CreateRange<Item = T>,
+{
+    type Item = R;
+
+    fn next(&mut self) -> Option<Self::Item> {
         match self {
-            RectIterator::FullWidth(x) => x.next(),
-            RectIterator::PartialWidth(x) => x.next(),
+            Self::FullWidth(x) => x.next(),
+            Self::PartialWidth(x) => x.next(),
         }
     }
 }
