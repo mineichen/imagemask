@@ -1,4 +1,4 @@
-use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData, num::NonZero};
+use std::{fmt::Debug, iter::FusedIterator, num::NonZero};
 
 use num_traits::{One, Zero};
 
@@ -16,7 +16,7 @@ pub struct RoiWidthExceedsOriginal {
 pub struct Clip2dIter<T, R> {
     parent: T,
     roi: Rect<u32>,
-    _range: PhantomData<R>,
+    pending: Option<R>,
 }
 
 impl<T: Iterator + ImageDimension, R: CreateRange<Item: Debug>> Debug for Clip2dIter<T, R>
@@ -50,7 +50,7 @@ where
         Ok(Self {
             parent,
             roi,
-            _range: PhantomData,
+            pending: None,
         })
     }
 }
@@ -86,7 +86,9 @@ where
         let sub_col_end = sub_x + sub_w;
 
         loop {
-            let item = self.parent.next()?;
+            let Some(item) = self.parent.next() else {
+                return self.pending.take();
+            };
             let start = item.start();
             let end = item.end();
 
@@ -96,7 +98,7 @@ where
             let last_col = (end - R::Item::one()) % outer_w;
 
             if first_row >= sub_row_end {
-                return None;
+                return self.pending.take();
             }
             if last_row < sub_row_start {
                 continue;
@@ -130,11 +132,30 @@ where
             let sub_end = sub_last_row * sub_w + sub_last_col + R::Item::one();
 
             debug_assert!(sub_start < sub_end, "Input must be SortedDisjoint");
+            //let is_line_end = (sub_end % outer_w) == R::Item::zero();
 
-            return Some(R::new_debug_checked(
-                sub_start,
-                R::Item::create_non_zero(sub_end - sub_start).unwrap(),
-            ));
+            match self.pending.take() {
+                Some(x) => {
+                    if x.end() == sub_start {
+                        self.pending = Some(R::new_debug_checked(
+                            x.start(),
+                            R::Item::create_non_zero(sub_end - x.start()).unwrap(),
+                        ));
+                    } else {
+                        self.pending = Some(R::new_debug_checked(
+                            sub_start,
+                            R::Item::create_non_zero(sub_end - sub_start).unwrap(),
+                        ));
+                        return Some(x);
+                    }
+                }
+                None => {
+                    self.pending = Some(R::new_debug_checked(
+                        sub_start,
+                        R::Item::create_non_zero(sub_end - sub_start).unwrap(),
+                    ));
+                }
+            };
         }
     }
 }
@@ -300,7 +321,7 @@ mod tests {
         let roi = Rect::new(2, 0, NonZero::new(3).unwrap(), NonZero::new(2).unwrap());
         let source = [2..5usize, 12..15, 22..25].with_bounds(WIDTH_U32);
         let result: Vec<_> = source.try_clip_2d(roi)?.collect();
-        assert_eq!(result, vec![0..3, 3..6]);
+        assert_eq!(result, vec![0..6]);
         Ok(())
     }
 
