@@ -376,7 +376,7 @@ impl<R> ReadHeader<R> {
 }
 
 impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
-    type Output = io::Result<AsyncRangeReader<R>>;
+    type Output = io::Result<AsyncRangeStream<R>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
@@ -393,7 +393,7 @@ impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
             .wrapping_mul(u64::from(roi.offset_y))
             .wrapping_add(u64::from(roi.offset_x));
         let reader = this.reader.take().unwrap();
-        Poll::Ready(Ok(AsyncRangeReader {
+        Poll::Ready(Ok(AsyncRangeStream {
             reader,
             roi,
             offset,
@@ -409,7 +409,7 @@ impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
 }
 
 pin_project! {
-    pub struct AsyncRangeReader<R> {
+    pub struct AsyncRangeStream<R> {
         #[pin] reader: R,
         roi: Roi,
         buf: [u8; U64_SIZE * 2],
@@ -423,7 +423,7 @@ pin_project! {
     }
 }
 
-impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
+impl<R: AsyncRead + Unpin> AsyncRangeStream<R> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(reader: R) -> ReadHeader<R> {
         ReadHeader::new(reader)
@@ -433,7 +433,7 @@ impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
         self.roi
     }
 
-    pub fn into_iter_local(self) -> Self {
+    pub fn into_stream_local(self) -> Self {
         Self {
             local: true,
             ..self
@@ -441,7 +441,7 @@ impl<R: AsyncRead + Unpin> AsyncRangeReader<R> {
     }
 }
 
-impl<R: AsyncRead> futures_core::Stream for AsyncRangeReader<R> {
+impl<R: AsyncRead> futures_core::Stream for AsyncRangeStream<R> {
     type Item = io::Result<NonZeroRange<u64>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -584,14 +584,14 @@ mod tests {
             Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(expected, result);
     }
 
     #[tokio::test]
     async fn read_empty_error() {
-        let result = AsyncRangeReader::new(&[][..]).await;
+        let result = AsyncRangeStream::new(&[][..]).await;
         expect_unexpected_eof(result);
     }
 
@@ -611,7 +611,7 @@ mod tests {
     #[tokio::test]
     async fn header_only_is_empty() {
         let buf = make_header_bytes(0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert!(result.is_empty());
     }
@@ -646,7 +646,7 @@ mod tests {
     async fn invalid_protocol_version() {
         let mut buf = vec![0x99, 0x00, 0x00];
         buf.resize(HEADER_SIZE, 0);
-        let result = AsyncRangeReader::new(&buf[..]).await;
+        let result = AsyncRangeStream::new(&buf[..]).await;
         let Err(e) = result else {
             panic!("Expected error")
         };
@@ -658,7 +658,7 @@ mod tests {
     async fn invalid_included_data_type() {
         let mut buf = vec![PROTOCOL_VERSION, 0x05, 0x00];
         buf.resize(HEADER_SIZE, 0);
-        let result = AsyncRangeReader::new(&buf[..]).await;
+        let result = AsyncRangeStream::new(&buf[..]).await;
         let Err(e) = result else {
             panic!("Expected error")
         };
@@ -670,7 +670,7 @@ mod tests {
     async fn invalid_excluded_data_type() {
         let mut buf = vec![PROTOCOL_VERSION, 0x00, 0xFF];
         buf.resize(HEADER_SIZE, 0);
-        let result = AsyncRangeReader::new(&buf[..]).await;
+        let result = AsyncRangeStream::new(&buf[..]).await;
         let Err(e) = result else {
             panic!("Expected error")
         };
@@ -681,14 +681,14 @@ mod tests {
     #[tokio::test]
     async fn truncated_header_one_byte() {
         let buf = vec![PROTOCOL_VERSION];
-        let result = AsyncRangeReader::new(&buf[..]).await;
+        let result = AsyncRangeStream::new(&buf[..]).await;
         expect_unexpected_eof(result);
     }
 
     #[tokio::test]
     async fn truncated_header_two_bytes() {
         let buf = vec![PROTOCOL_VERSION, 0x00];
-        let result = AsyncRangeReader::new(&buf[..]).await;
+        let result = AsyncRangeStream::new(&buf[..]).await;
         expect_unexpected_eof(result);
     }
 
@@ -696,7 +696,7 @@ mod tests {
     async fn truncated_range_partial_gap() {
         let mut buf = make_header_bytes(0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
         buf.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result = reader.try_collect::<Vec<_>>().await;
         expect_unexpected_eof(result);
     }
@@ -705,7 +705,7 @@ mod tests {
     async fn truncated_range_gap_complete_len_partial() {
         let mut buf = make_header_bytes(0, 0, NonZeroU32::MIN, NonZeroU32::MIN);
         buf.extend_from_slice(&make_range_bytes(10, 100)[..12]);
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result = reader.try_collect::<Vec<_>>().await;
         expect_unexpected_eof(result);
     }
@@ -720,7 +720,7 @@ mod tests {
             Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(result, vec![NonZeroRange::new(100u64..201)]);
     }
@@ -735,7 +735,7 @@ mod tests {
             Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(
             result,
@@ -748,7 +748,7 @@ mod tests {
         let mut buf = make_header_bytes(0, 0, NONZERO_1000, NONZERO_1000);
         buf.extend_from_slice(&make_range_bytes(10, 100));
         buf.extend_from_slice(&make_range_bytes(5, 0));
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
         assert_eq!(result, vec![NonZeroRange::new(10u64..110)]);
     }
@@ -771,7 +771,7 @@ mod tests {
             }
         }
 
-        let result = AsyncRangeReader::new(FailingReader).await;
+        let result = AsyncRangeStream::new(FailingReader).await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::Other));
     }
 
@@ -826,7 +826,7 @@ mod tests {
         );
         writer.await.unwrap();
 
-        let reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let result: Vec<_> = reader.try_collect().await.unwrap();
 
         let expected: Vec<_> = global_ranges
@@ -866,14 +866,14 @@ mod tests {
         );
         writer.await.unwrap();
 
-        let local_reader = AsyncRangeReader::new(&buf[..])
+        let local_reader = AsyncRangeStream::new(&buf[..])
             .await
             .unwrap()
-            .into_iter_local();
+            .into_stream_local();
         let local_result: Vec<_> = local_reader.try_collect().await.unwrap();
         assert_eq!(local_result, vec![NonZeroRange::new(0u64..(3 * 17))]);
 
-        let global_reader = AsyncRangeReader::new(&buf[..]).await.unwrap();
+        let global_reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
         let global_result: Vec<_> = global_reader
             .map_ok(RangeInclusive::<u64>::from)
             .try_collect()
@@ -907,7 +907,7 @@ mod tests {
             buf
         };
 
-        let reader = AsyncRangeReader::new(&phase1_buf[..]).await.unwrap();
+        let reader = AsyncRangeStream::new(&phase1_buf[..]).await.unwrap();
         let reader_roi = reader.roi();
         assert_eq!(roi, reader_roi);
 
@@ -916,7 +916,7 @@ mod tests {
             .await
             .unwrap();
 
-        let verify_reader = AsyncRangeReader::new(&phase2_buf[..]).await.unwrap();
+        let verify_reader = AsyncRangeStream::new(&phase2_buf[..]).await.unwrap();
         let verified = verify_reader.try_collect::<Vec<_>>().await.unwrap();
         assert_eq!(expected, verified);
         assert_eq!(phase1_buf, phase2_buf);

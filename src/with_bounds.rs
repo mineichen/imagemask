@@ -1,7 +1,5 @@
 use std::{iter::FusedIterator, num::NonZero};
 
-use futures_core::Stream;
-
 use crate::Rect;
 
 pub trait ImageDimension {
@@ -9,6 +7,7 @@ pub trait ImageDimension {
     fn width(&self) -> NonZero<u32>;
 }
 
+#[cfg(feature = "async-io")]
 pin_project_lite::pin_project! {
     #[derive(Clone, Debug)]
     pub struct WithBounds<I> {
@@ -16,6 +15,13 @@ pin_project_lite::pin_project! {
         width: NonZero<u32>,
         height: NonZero<u32>
     }
+}
+#[cfg(not(feature = "async-io"))]
+#[derive(Clone, Debug)]
+pub struct WithBounds<I> {
+    inner: I,
+    width: NonZero<u32>,
+    height: NonZero<u32>,
 }
 
 impl<I> WithBounds<I> {
@@ -44,7 +50,8 @@ impl<I: Iterator> Iterator for WithBounds<I> {
     }
 }
 
-impl<I: Stream> Stream for WithBounds<I> {
+#[cfg(feature = "async-io")]
+impl<I: futures_core::Stream> futures_core::Stream for WithBounds<I> {
     type Item = I::Item;
 
     fn poll_next(

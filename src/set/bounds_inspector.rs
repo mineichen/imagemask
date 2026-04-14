@@ -158,8 +158,6 @@ mod range_set_blaze_0_5_interop {
 mod tests {
     use std::{num::NonZero, ops::Range};
 
-    use range_set_blaze_0_5::SortedDisjoint;
-
     use super::*;
     use crate::{ImageDimension, ImaskSet};
 
@@ -197,6 +195,8 @@ mod tests {
         assert_eq!(inspector.width(), WIDTH_U32);
     }
 
+    #[cfg(feature = "range-set-blaze-0_5")]
+    use range_set_blaze_0_5::SortedDisjoint;
     #[cfg(feature = "range-set-blaze-0_5")]
     fn _impl_disjoint(
         inspector: BoundsInspector<impl SortedDisjoint<u32> + ImageDimension, RangeInclusive<u32>>,

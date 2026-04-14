@@ -623,3 +623,10 @@ mod tests {
         assert_eq!(vec![0u64..25], roi);
     }
 }
+
+pub trait IntoRoiIterator {
+    type IntoIter: Iterator<Item = Self::Item>;
+    type Item: CreateRange;
+
+    fn into_roi_iterator() -> Self::IntoIter;
+}
