@@ -60,14 +60,15 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
         }
     }
     pub fn try_from_ordered_iter<TRange>(
-        iter: impl IntoIterator<Item = (Range<TRange>, TMeta)>,
-        bounds: Rect<u32>,
+        iter: impl IntoIterator<Item = (Range<TRange>, TMeta), IntoIter: ImageDimension>,
     ) -> Result<Self, String>
     where
         TRange: Into<u64>,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
+        let iter = iter.into_iter();
+        let bounds = iter.bounds();
         assert!(bounds.x == 0);
         assert!(bounds.y == 0);
         fn create_checked<T: TryFrom<u64, Error: Display>>(
@@ -80,7 +81,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             T::try_from(end - start).map_err(|e| e.to_string())
         }
 
-        let mut iter = iter.into_iter().map(|(range, meta)| {
+        let mut iter = iter.map(|(range, meta)| {
             let start = range.start.into();
             let end = range.end.into();
             create_checked::<TIncluded>(start, end).map(|x| (start..end, x, meta))
@@ -272,6 +273,8 @@ impl<TMeta> MetaRange<NonZeroRange<u64>, TMeta> {
 mod tests {
     use std::{num::NonZero, ops::RangeInclusive};
 
+    use crate::ImaskSet;
+
     use super::*;
 
     fn test_bounds() -> Rect<u32> {
@@ -306,13 +309,13 @@ mod tests {
         #[test]
         fn combine_owned() {
             let a = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter(
-                [(10u32..30, "a_first".into()), (42..50, "a_second".into())],
-                test_bounds(),
+                [(10u32..30, "a_first".into()), (42..50, "a_second".into())]
+                    .with_roi(test_bounds()),
             )
             .unwrap();
             let b = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter(
-                [(20u32..30, "b_first".into()), (41..45, "b_second".into())],
-                test_bounds(),
+                [(20u32..30, "b_first".into()), (41..45, "b_second".into())]
+                    .with_roi(test_bounds()),
             )
             .unwrap();
 
@@ -337,13 +340,13 @@ mod tests {
             use range_set_blaze_0_5::SortedDisjointMap;
 
             let a = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter(
-                [(10u32..30, "a_first".into()), (42..50, "a_second".into())],
-                test_bounds(),
+                [(10u32..30, "a_first".into()), (42..50, "a_second".into())]
+                    .with_roi(test_bounds()),
             )
             .unwrap();
             let b = SortedRangesMap::<u8, u8, Vec<TestMetaItem>>::try_from_ordered_iter(
-                [(20u32..30, "b_first".into()), (41..45, "b_second".into())],
-                test_bounds(),
+                [(20u32..30, "b_first".into()), (41..45, "b_second".into())]
+                    .with_roi(test_bounds()),
             )
             .unwrap();
 
@@ -370,8 +373,7 @@ mod tests {
     #[test]
     fn ranges_starting_at_zero() {
         let map = SortedRangesMap::<u32, u32, Vec<&str>>::try_from_ordered_iter(
-            [(0u64..1, "first"), (5u64..6, "second")],
-            test_bounds(),
+            [(0u64..1, "first"), (5u64..6, "second")].with_roi(test_bounds()),
         );
 
         let map = map.unwrap();
@@ -382,8 +384,7 @@ mod tests {
     #[test]
     fn range_with_initial_offset() {
         let encoded = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter(
-            [(10u32..20, "first"), (255..257, "second")],
-            test_bounds(),
+            [(10u32..20, "first"), (255..257, "second")].with_roi(test_bounds()),
         )
         .unwrap();
         assert_eq!(
@@ -398,8 +399,8 @@ mod tests {
             [
                 (10u32..20, "first".to_string()),
                 (255..257, "second".to_string()),
-            ],
-            test_bounds(),
+            ]
+            .with_roi(test_bounds()),
         )
         .unwrap();
         let collected: Vec<_> = encoded.iter_owned::<RangeInclusive<u64>>().collect();
@@ -415,8 +416,8 @@ mod tests {
             [
                 (10u32..20, "first".to_string()),
                 (255..257, "second".to_string()),
-            ],
-            test_bounds(),
+            ]
+            .with_roi(test_bounds()),
         )
         .unwrap();
         let collected: Vec<_> = encoded.into_iter().collect();
@@ -436,8 +437,7 @@ mod tests {
     #[test]
     fn assert_big_gap_causes_error() {
         let error = SortedRangesMap::<u16, u8, _>::try_from_ordered_iter(
-            [(10u32..20, "first"), (276..280, "second")],
-            test_bounds(),
+            [(10u32..20, "first"), (276..280, "second")].with_roi(test_bounds()),
         )
         .unwrap_err();
         assert!(error.contains("out of range"), "{error}");
@@ -446,8 +446,7 @@ mod tests {
     #[test]
     fn assert_big_ranges_cause_error() {
         let error = SortedRangesMap::<u8, u16, _>::try_from_ordered_iter(
-            [(10u32..280, "first")],
-            test_bounds(),
+            [(10u32..280, "first")].with_roi(test_bounds()),
         )
         .unwrap_err();
         assert!(error.contains("out of range"), "{error}");
@@ -455,8 +454,7 @@ mod tests {
     #[test]
     fn zero_ranges_cause_error() {
         let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter(
-            [(10u32..10, "first")],
-            test_bounds(),
+            [(10u32..10, "first")].with_roi(test_bounds()),
         )
         .unwrap_err();
         assert!(error.contains("> 10"), "{error}");
@@ -465,8 +463,7 @@ mod tests {
     #[test]
     fn overlapping_cause_error() {
         let error = SortedRangesMap::<u8, u8, _>::try_from_ordered_iter(
-            [(10u32..12, "first"), (11..12, "second")],
-            test_bounds(),
+            [(10u32..12, "first"), (11..12, "second")].with_roi(test_bounds()),
         )
         .unwrap_err();
         assert!(error.contains("> 12"), "{error}");
@@ -475,8 +472,7 @@ mod tests {
     #[test]
     fn split_combine() {
         let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter(
-            [(10u32..15, "a1".to_string()), (30..35, "a2".to_string())],
-            test_bounds(),
+            [(10u32..15, "a1".to_string()), (30..35, "a2".to_string())].with_roi(test_bounds()),
         )
         .unwrap();
 
@@ -503,8 +499,8 @@ mod tests {
             [
                 (10u32..15, "first".to_string()),
                 (30..35, "second".to_string()),
-            ],
-            test_bounds(),
+            ]
+            .with_roi(test_bounds()),
         )
         .unwrap();
 
@@ -533,8 +529,7 @@ mod tests {
     #[test]
     fn split_returns_none_when_empty() {
         let a = SortedRangesMap::<u8, u8, Vec<String>>::try_from_ordered_iter(
-            [(10u32..15, "test".to_string())],
-            test_bounds(),
+            [(10u32..15, "test".to_string())].with_roi(test_bounds()),
         )
         .unwrap();
 

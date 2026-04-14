@@ -2,6 +2,7 @@ use std::{
     fmt::Debug,
     iter::{FusedIterator, Once},
     marker::PhantomData,
+    num::{NonZero, NonZeroU32},
     ops::{Add, Mul},
 };
 
@@ -21,17 +22,20 @@ pub enum RectIteratorKind<R: CreateRange<Item: SignedNonZeroable>> {
     PartialWidth(PartialWidthRectIterator<R>),
 }
 
-impl<R: CreateRange<Item = u32>> ImageDimension for RectIterator<R> {
+impl<R: CreateRange<Item: TryInto<u32, Error: Debug>>> ImageDimension for RectIterator<R> {
     fn width(&self) -> std::num::NonZero<u32> {
-        self.width
+        NonZero::new(self.width.into().try_into().expect("width < u32::MAX"))
+            .expect("self.width is NonZero")
     }
 
     fn bounds(&self) -> crate::Rect<u32> {
+        let height = NonZeroU32::new(self.height.into().try_into().expect("height < u32::MAX"))
+            .expect("self.width is NonZero");
         Rect {
             x: 0,
             y: 0,
-            width: self.width,
-            height: self.height,
+            width: self.width(),
+            height: height,
         }
     }
 }
