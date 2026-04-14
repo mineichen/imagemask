@@ -358,53 +358,37 @@ where
     }
 }
 
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct ReadHeader<R> {
-    reader: Option<R>,
-    buf: [u8; HEADER_SIZE],
-    pos: usize,
+pin_project_lite::pin_project! {
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    struct HeaderReader<R> {
+        #[pin] reader: R,
+        buf: [u8; HEADER_SIZE],
+        pos: usize,
+    }
 }
 
-impl<R> ReadHeader<R> {
+impl<R> HeaderReader<R> {
     fn new(reader: R) -> Self {
         Self {
-            reader: Some(reader),
+            reader,
             buf: [0; HEADER_SIZE],
             pos: 0,
         }
     }
 }
 
-impl<R: AsyncRead + Unpin> Future for ReadHeader<R> {
-    type Output = io::Result<AsyncRangeStream<R>>;
+impl<R: AsyncRead + Unpin> Future for HeaderReader<R> {
+    type Output = io::Result<Header>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = &mut *self;
-        let reader = this.reader.as_mut().unwrap();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
         ready!(poll_read_exact(
-            Pin::new(reader),
+            this.reader,
             cx,
             &mut this.buf[..],
             &mut this.pos,
         ))?;
-        let header = Header::from_bytes(&this.buf)?;
-        let roi = header.roi;
-        let offset = u64::from(roi.width.get())
-            .wrapping_mul(u64::from(roi.offset_y))
-            .wrapping_add(u64::from(roi.offset_x));
-        let reader = this.reader.take().unwrap();
-        Poll::Ready(Ok(AsyncRangeStream {
-            reader,
-            roi,
-            offset,
-            buf: [0; U64_SIZE * 2],
-            pos: 0,
-            last_end: 0,
-            local: false,
-            pending_local_start: 0,
-            pending_local_len: 0,
-            crossed_line_gaps: 0,
-        }))
+        Poll::Ready(Header::from_bytes(&this.buf))
     }
 }
 
@@ -425,8 +409,24 @@ pin_project! {
 
 impl<R: AsyncRead + Unpin> AsyncRangeStream<R> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(reader: R) -> ReadHeader<R> {
-        ReadHeader::new(reader)
+    pub async fn new(mut reader: R) -> io::Result<Self> {
+        let header = HeaderReader::new(&mut reader).await?;
+        let roi = header.roi;
+        let offset = u64::from(roi.width.get())
+            .wrapping_mul(u64::from(roi.offset_y))
+            .wrapping_add(u64::from(roi.offset_x));
+        Ok(AsyncRangeStream {
+            reader,
+            roi,
+            offset,
+            buf: [0; U64_SIZE * 2],
+            pos: 0,
+            last_end: 0,
+            local: false,
+            pending_local_start: 0,
+            pending_local_len: 0,
+            crossed_line_gaps: 0,
+        })
     }
 
     pub fn roi(&self) -> Roi {
