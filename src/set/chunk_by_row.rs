@@ -154,6 +154,10 @@ where
     fn width(&self) -> NonZero<u32> {
         self.shared.borrow().source.width()
     }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        self.shared.borrow().source.bounds()
+    }
 }
 
 impl<T, R> ImageDimension for ChunkByRowRangesRowIter<T, R>
@@ -164,6 +168,9 @@ where
 {
     fn width(&self) -> NonZero<u32> {
         self.shared.borrow().source.width()
+    }
+    fn bounds(&self) -> crate::Rect<u32> {
+        self.shared.borrow().source.bounds()
     }
 }
 

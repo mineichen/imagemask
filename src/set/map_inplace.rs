@@ -113,6 +113,10 @@ impl<TIncluded, TExcluded> ImageDimension for SourceIterator<TIncluded, TExclude
     fn width(&self) -> NonZero<u32> {
         self.cell.borrow().0.bounds.width
     }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        self.cell.borrow().0.bounds
+    }
 }
 
 impl<TIncluded, TExcluded> Iterator for SourceIterator<TIncluded, TExcluded>

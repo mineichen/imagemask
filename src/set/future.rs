@@ -103,6 +103,7 @@ mod tests {
         let stream_ranges = SortedRanges::<u64, u64>::try_from_ordered_stream(WithBounds::new(
             futures_util::stream::iter(ranges_array.iter().map(|x| Ok(x.clone()))),
             NON_ZERO_1000,
+            NON_ZERO_1000,
         ))
         .await?;
         let iter_ranges = SortedRanges::<u64, u64>::try_from_ordered_iter(

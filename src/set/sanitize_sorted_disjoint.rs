@@ -175,6 +175,10 @@ where
     fn width(&self) -> NonZero<u32> {
         self.iter.width()
     }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        self.iter.bounds()
+    }
 }
 
 #[cfg(feature = "range-set-blaze-0_5")]

@@ -7,11 +7,12 @@ use std::{
 
 use num_traits::Zero;
 
-use crate::{CreateRange, ImageDimension, SignedNonZeroable};
+use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable};
 
 pub struct RectIterator<T: SignedNonZeroable, R> {
     pub kind: RectIteratorKind<T, R>,
     width: T::NonZero,
+    height: T::NonZero,
 }
 
 #[derive(Clone)]
@@ -23,6 +24,15 @@ pub enum RectIteratorKind<T: SignedNonZeroable, R> {
 impl<R> ImageDimension for RectIterator<u32, R> {
     fn width(&self) -> std::num::NonZero<u32> {
         self.width
+    }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        Rect {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        }
     }
 }
 
@@ -63,6 +73,7 @@ where
         Self {
             kind,
             width: global_width,
+            height: T::create_non_zero(height.into() + y).unwrap(),
         }
     }
 }

@@ -71,8 +71,9 @@ pub trait ImaskSet: IntoIterator + Sized {
         SanitizeSortedDisjoint::new(self.into_iter())
     }
 
+    #[deprecated = "Use with_bounds"]
     fn with_bounds(self, width: NonZeroU32) -> WithBounds<Self::IntoIter> {
-        WithBounds::new(self.into_iter(), width)
+        WithBounds::new(self.into_iter(), width, NonZeroU32::MAX)
     }
 }
 
@@ -301,6 +302,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.excluded.iter().copied(),
             T::Item::default(),
             self.bounds.width,
+            self.bounds.height,
         )
     }
     pub fn iter_roi_owned<T: CreateRange>(
@@ -316,6 +318,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.excluded.into_iter(),
             T::Item::default(),
             self.bounds.width,
+            self.bounds.height,
         )
     }
     pub fn iter_global_with<T: CreateRange>(
@@ -345,6 +348,7 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.excluded.iter().copied(),
             self.bounds.width,
             width,
+            NonZeroU32::new(self.bounds.height.get() + self.bounds.y).unwrap(),
         )
     }
     pub fn iter_global_owned_with<T: CreateRange>(
@@ -370,11 +374,15 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
             self.excluded.into_iter(),
             self.bounds.width,
             width,
+            NonZeroU32::new(self.bounds.height.get() + self.bounds.y).unwrap(),
         )
     }
 }
 
 impl<TIncluded, TExcluded> ImageDimension for SortedRanges<TIncluded, TExcluded> {
+    fn bounds(&self) -> Rect<u32> {
+        self.bounds
+    }
     fn width(&self) -> NonZero<u32> {
         self.bounds.width
     }

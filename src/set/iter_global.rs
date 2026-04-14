@@ -2,10 +2,10 @@ use std::{
     cmp::min,
     iter::FusedIterator,
     num::NonZeroU32,
-    ops::{Add, Div, Mul, Rem, Sub},
+    ops::{Add, Bound, Div, Mul, Rem, Sub},
 };
 
-use crate::{CreateRange, ImageDimension, SignedNonZeroable, UncheckedCast};
+use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable, UncheckedCast};
 
 pub struct SortedRangesIterGlobal<I, E, T: CreateRange> {
     included: I,
@@ -20,6 +20,7 @@ pub struct SortedRangesIterGlobal<I, E, T: CreateRange> {
     /// it is flushed when the next segment is not adjacent.
     pending_start: T::Item,
     pending_end: T::Item,
+    new_height: NonZeroU32,
 }
 
 impl<I, E, T: CreateRange> SortedRangesIterGlobal<I, E, T>
@@ -32,6 +33,7 @@ where
         excluded: E,
         old_width: NonZeroU32,
         new_width: NonZeroU32,
+        new_height: NonZeroU32,
     ) -> Self {
         Self {
             included,
@@ -40,6 +42,7 @@ where
             remaining: T::Item::default(),
             old_width: old_width.get().cast_unchecked(),
             new_width,
+            new_height,
             new_width_out: new_width.get().cast_unchecked(),
             pending_start: T::Item::default(),
             pending_end: T::Item::default(),
@@ -50,6 +53,15 @@ where
 impl<I, E, T: CreateRange> ImageDimension for SortedRangesIterGlobal<I, E, T> {
     fn width(&self) -> std::num::NonZero<u32> {
         self.new_width
+    }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        Rect {
+            x: 0,
+            y: 0,
+            width: self.new_width,
+            height: self.new_height,
+        }
     }
 }
 

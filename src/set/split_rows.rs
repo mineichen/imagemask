@@ -8,8 +8,10 @@ pub struct SplitRowsIter<T, R> {
     _range: PhantomData<R>,
 }
 
-impl<T, R> SplitRowsIter<T, R> {
+impl<T: ImageDimension, R> SplitRowsIter<T, R> {
     pub fn new(parent: T) -> Self {
+        assert_eq!(parent.bounds().x, 0);
+        assert_eq!(parent.bounds().y, 0);
         Self {
             parent,
             pending: None,
@@ -80,6 +82,10 @@ where
 {
     fn width(&self) -> NonZero<u32> {
         self.parent.width()
+    }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        self.parent.bounds()
     }
 }
 #[cfg(feature = "range-set-blaze-0_5")]

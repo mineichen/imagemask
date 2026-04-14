@@ -2,7 +2,10 @@ use std::{iter::FusedIterator, num::NonZero};
 
 use futures_core::Stream;
 
+use crate::Rect;
+
 pub trait ImageDimension {
+    fn bounds(&self) -> Rect<u32>;
     fn width(&self) -> NonZero<u32>;
 }
 
@@ -11,12 +14,17 @@ pin_project_lite::pin_project! {
     pub struct WithBounds<I> {
         #[pin] inner: I,
         width: NonZero<u32>,
+        height: NonZero<u32>
     }
 }
 
 impl<I> WithBounds<I> {
-    pub fn new(inner: I, width: NonZero<u32>) -> Self {
-        Self { inner, width }
+    pub fn new(inner: I, width: NonZero<u32>, height: NonZero<u32>) -> Self {
+        Self {
+            inner,
+            width,
+            height,
+        }
     }
 
     pub fn into_inner(self) -> I {
@@ -51,6 +59,14 @@ impl<I: Stream> Stream for WithBounds<I> {
 impl<I: FusedIterator> FusedIterator for WithBounds<I> {}
 
 impl<I> ImageDimension for WithBounds<I> {
+    fn bounds(&self) -> Rect<u32> {
+        Rect {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        }
+    }
     fn width(&self) -> NonZero<u32> {
         self.width
     }

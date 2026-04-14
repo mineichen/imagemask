@@ -3,13 +3,14 @@ use std::{
     num::{NonZero, NonZeroU32},
 };
 
-use crate::{CreateRange, ImageDimension, SignedNonZeroable, UncheckedCast};
+use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable, UncheckedCast};
 
 pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut: CreateRange> {
     include: TIncludedIter,
     excluded: TExcludedIter,
     accumulator: TOut::Item,
     width: NonZeroU32,
+    height: NonZeroU32,
 }
 
 impl<TIncludedIter, TExcludedIter, TRange: CreateRange>
@@ -20,12 +21,14 @@ impl<TIncludedIter, TExcludedIter, TRange: CreateRange>
         excluded: TExcludedIter,
         accumulator: TRange::Item,
         width: NonZeroU32,
+        height: NonZeroU32,
     ) -> Self {
         Self {
             include,
             excluded,
             accumulator,
             width,
+            height,
         }
     }
 }
@@ -35,6 +38,15 @@ impl<TIncludedIter, TExcludedIter, TOut: CreateRange> ImageDimension
 {
     fn width(&self) -> NonZero<u32> {
         self.width
+    }
+
+    fn bounds(&self) -> crate::Rect<u32> {
+        Rect {
+            x: 0,
+            y: 0,
+            width: self.width,
+            height: self.height,
+        }
     }
 }
 

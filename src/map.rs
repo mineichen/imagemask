@@ -182,6 +182,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             self.excluded.iter().copied(),
             T::Item::default(),
             self.bounds.width,
+            self.bounds.height,
         )
     }
     pub fn ranges_owned<T: CreateRange>(
@@ -197,6 +198,7 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
             self.excluded.into_iter(),
             T::Item::default(),
             self.bounds.width,
+            self.bounds.height,
         )
     }
 }
@@ -204,6 +206,10 @@ impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMet
 impl<TIncluded, TExcluded, TMeta> ImageDimension for SortedRangesMap<TIncluded, TExcluded, TMeta> {
     fn width(&self) -> NonZero<u32> {
         self.bounds.width
+    }
+
+    fn bounds(&self) -> Rect<u32> {
+        self.bounds
     }
 }
 

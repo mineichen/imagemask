@@ -125,6 +125,9 @@ where
     fn width(&self) -> NonZero<u32> {
         self.parent.width()
     }
+    fn bounds(&self) -> Rect<u32> {
+        self.parent.bounds()
+    }
 }
 
 #[cfg(feature = "range-set-blaze-0_5")]

@@ -175,6 +175,10 @@ where
     fn width(&self) -> NonZero<u32> {
         self.roi.width
     }
+
+    fn bounds(&self) -> Rect<u32> {
+        self.roi
+    }
 }
 
 #[cfg(feature = "range-set-blaze-0_5")]
