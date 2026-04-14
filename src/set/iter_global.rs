@@ -2,7 +2,7 @@ use std::{
     cmp::min,
     iter::FusedIterator,
     num::NonZeroU32,
-    ops::{Add, Bound, Div, Mul, Rem, Sub},
+    ops::{Add, Div, Mul, Rem, Sub},
 };
 
 use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable, UncheckedCast};

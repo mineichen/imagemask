@@ -107,7 +107,7 @@ mod tests {
         ))
         .await?;
         let iter_ranges = SortedRanges::<u64, u64>::try_from_ordered_iter(
-            ranges_array.with_bounds(NON_ZERO_1000),
+            ranges_array.with_bounds(NON_ZERO_1000, NON_ZERO_1000),
         )?;
         assert_eq!(stream_ranges, iter_ranges);
         Ok(())

@@ -71,9 +71,8 @@ pub trait ImaskSet: IntoIterator + Sized {
         SanitizeSortedDisjoint::new(self.into_iter())
     }
 
-    #[deprecated = "Use with_bounds"]
-    fn with_bounds(self, width: NonZeroU32) -> WithBounds<Self::IntoIter> {
-        WithBounds::new(self.into_iter(), width, NonZeroU32::MAX)
+    fn with_bounds(self, width: NonZeroU32, height: NonZeroU32) -> WithBounds<Self::IntoIter> {
+        WithBounds::new(self.into_iter(), width, height)
     }
 }
 
@@ -589,8 +588,9 @@ mod tests {
 
     #[test]
     fn iter_global_with_multiple_in_same_line() {
+        const SIZE: NonZero<u32> = NonZero::new(20).unwrap();
         let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(
-            [0u32..1, 3..4, 8..11, 13..14, 19..21].with_bounds(NonZero::new(20u32).unwrap()),
+            [0u32..1, 3..4, 8..11, 13..14, 19..21].with_bounds(SIZE, SIZE),
         )
         .unwrap();
 
@@ -613,7 +613,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(1, ranges.len());
         let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter_roi(
-            ranges.with_bounds(RECT_SIZE),
+            ranges.with_bounds(RECT_SIZE, RECT_SIZE),
             rect,
         )
         .unwrap();

@@ -15,8 +15,8 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// use std::num::NonZero;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let width = const { NonZero::new(1000u32).unwrap() };
-    /// let source = [10u32..20, 30..45, 50..60].with_bounds(width);
+    /// let size = const { NonZero::new(1000u32).unwrap() };
+    /// let source = [10u32..20, 30..45, 50..60].with_bounds(size, size);
     /// let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter(source)?;
     /// let ranges = ranges.map_inplace(|iter| {
     ///     iter.map(|x| {

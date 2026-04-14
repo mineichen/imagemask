@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn single_range_crossing_image_width() {
-        let source = [2..27usize].with_bounds(WIDTH_U32);
+        let source = [2..27usize].with_bounds(WIDTH_U32, WIDTH_U32);
         let mut inspector = BoundsInspector::<_, Range<usize>>::new(source);
         assert_eq!(1, (&mut inspector).count());
         let b = const { Rect::new(0, 0, NonZero::new(10).unwrap(), NonZero::new(3).unwrap()) };
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn multiple_ranges_with_different_lengths_and_row_gaps() {
         let mut inspector = [3..6usize, 30..33, 55..65]
-            .with_bounds(WIDTH_U32)
+            .with_bounds(WIDTH_U32, WIDTH_U32)
             .inspect_bounds();
         // let mut inspector = BoundsInspector::<_, Range<usize>>::new(source);
         let count = (&mut inspector).count();
@@ -191,7 +191,8 @@ mod tests {
     #[test]
     fn empty_iterator_returns_none() {
         let source: [Range<usize>; 0] = [];
-        let inspector = BoundsInspector::<_, Range<usize>>::new(source.with_bounds(WIDTH_U32));
+        let inspector =
+            BoundsInspector::<_, Range<usize>>::new(source.with_bounds(WIDTH_U32, WIDTH_U32));
         assert_eq!(inspector.bounds(), None);
         assert_eq!(inspector.width(), WIDTH_U32);
     }
