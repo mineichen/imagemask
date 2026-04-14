@@ -433,7 +433,7 @@ impl<R: AsyncRead + Unpin> AsyncRangeStream<R> {
         self.roi
     }
 
-    pub fn into_stream_local(self) -> Self {
+    pub fn into_roi_stream(self) -> Self {
         Self {
             local: true,
             ..self
@@ -869,7 +869,7 @@ mod tests {
         let local_reader = AsyncRangeStream::new(&buf[..])
             .await
             .unwrap()
-            .into_stream_local();
+            .into_roi_stream();
         let local_result: Vec<_> = local_reader.try_collect().await.unwrap();
         assert_eq!(local_result, vec![NonZeroRange::new(0u64..(3 * 17))]);
 
