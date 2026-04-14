@@ -11,6 +11,7 @@ fn invalid_data<T: Display>(e: T) -> std::io::Error {
 }
 use crate::{
     CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast, WithBounds,
+    WithRoi,
 };
 
 mod bounds_inspector;
@@ -71,6 +72,9 @@ pub trait ImaskSet: IntoIterator + Sized {
         SanitizeSortedDisjoint::new(self.into_iter())
     }
 
+    fn with_roi(self, roi: Rect<u32>) -> WithRoi<Self::IntoIter> {
+        WithRoi::new(self.into_iter(), roi)
+    }
     fn with_bounds(self, width: NonZeroU32, height: NonZeroU32) -> WithBounds<Self::IntoIter> {
         WithBounds::new(self.into_iter(), width, height)
     }

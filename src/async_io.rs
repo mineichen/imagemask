@@ -10,7 +10,7 @@ use std::{
 use futures_io::{AsyncRead, AsyncWrite};
 use pin_project_lite::pin_project;
 
-use crate::{CreateRange, NonZeroRange};
+use crate::{CreateRange, ImageDimension, NonZeroRange};
 
 const U32_SIZE: usize = std::mem::size_of::<u32>();
 const U64_SIZE: usize = std::mem::size_of::<u64>();
@@ -26,7 +26,7 @@ pub struct Roi {
 }
 
 impl Roi {
-    pub fn new(offset_x: u32, offset_y: u32, width: NonZeroU32, height: NonZeroU32) -> Self {
+    pub const fn new(offset_x: u32, offset_y: u32, width: NonZeroU32, height: NonZeroU32) -> Self {
         Self {
             offset_x,
             offset_y,
@@ -205,7 +205,6 @@ pin_project! {
         len: usize,
         last_end: u64,
         pending_range: Option<(u64, u64, u64, u64)>,
-        roi: Roi,
     }
 }
 
@@ -218,7 +217,7 @@ enum WriterState {
 }
 
 impl<W, S> AsyncRangeWriter<W, S> {
-    pub fn new(writer: W, stream: S, roi: Roi) -> Self {
+    pub fn new(writer: W, stream: S) -> Self {
         Self {
             writer,
             stream,
@@ -228,30 +227,31 @@ impl<W, S> AsyncRangeWriter<W, S> {
             len: 0,
             last_end: 0,
             pending_range: None,
-            roi,
         }
-    }
-
-    pub fn roi(&self) -> Roi {
-        self.roi
     }
 }
 
 impl<W, S> Future for AsyncRangeWriter<W, S>
 where
     W: AsyncWrite,
-    S: futures_core::Stream,
+    S: futures_core::Stream + ImageDimension,
     S::Item: IntoRangeResult,
 {
     type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
-
+        let roi = this.stream.bounds();
+        let roi = Roi {
+            offset_x: roi.x,
+            offset_y: roi.y,
+            width: roi.width,
+            height: roi.height,
+        };
         loop {
             match &mut this.state {
                 WriterState::Header => {
-                    let header = Header::new(DataType::U64, DataType::U64, *this.roi);
+                    let header = Header::new(DataType::U64, DataType::U64, roi);
                     this.buf[..HEADER_SIZE].copy_from_slice(&header.to_bytes());
                     *this.len = HEADER_SIZE;
                     *this.state = WriterState::WriteBuf;
@@ -260,14 +260,14 @@ where
                     Some(item) => {
                         let r = item.into_range_result()?;
                         let (global_start, global_end) = (r.start().into(), r.end().into());
-                        let flat_offset = (u64::from(this.roi.width.get()))
-                            .wrapping_mul(u64::from(this.roi.offset_y))
-                            .wrapping_add(u64::from(this.roi.offset_x));
+                        let flat_offset = (u64::from(roi.width.get()))
+                            .wrapping_mul(u64::from(roi.offset_y))
+                            .wrapping_add(u64::from(roi.offset_x));
                         let start = global_start - flat_offset;
                         let end = global_end - flat_offset;
                         let len = end - start;
-                        let width = u64::from(this.roi.width.get());
-                        let ox = u64::from(this.roi.offset_x);
+                        let width = u64::from(roi.width.get());
+                        let ox = u64::from(roi.offset_x);
                         if let Some((pending_start, pending_len, pending_actual_end, gap_base)) =
                             *this.pending_range
                         {
@@ -407,6 +407,21 @@ pin_project! {
     }
 }
 
+impl<R> ImageDimension for AsyncRangeStream<R> {
+    fn bounds(&self) -> crate::Rect<u32> {
+        crate::Rect {
+            x: self.roi.offset_x,
+            y: self.roi.offset_y,
+            width: self.roi.width,
+            height: self.roi.height,
+        }
+    }
+
+    fn width(&self) -> std::num::NonZero<u32> {
+        self.roi.width
+    }
+}
+
 impl<R: AsyncRead + Unpin> AsyncRangeStream<R> {
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(mut reader: R) -> io::Result<Self> {
@@ -533,9 +548,17 @@ mod tests {
     use futures_util::TryStreamExt;
     use testresult::TestResult;
 
+    use crate::{Rect, WithRoi};
+
     use super::*;
 
     const NONZERO_1000: NonZeroU32 = NonZeroU32::new(1000).unwrap();
+    const ROI: Rect<u32> = Rect::new(0, 0, NONZERO_1000, NONZERO_1000);
+    fn with_1000_roi<I: IntoIterator>(
+        inner: I,
+    ) -> WithRoi<futures_util::stream::Iter<I::IntoIter>> {
+        WithRoi::new(futures_util::stream::iter(inner), ROI)
+    }
 
     fn make_header_bytes(
         offset_x: u32,
@@ -577,11 +600,10 @@ mod tests {
             .map(|r| NonZeroRange::new(*r.start()..*r.end() + 1))
             .collect();
         let mut buf = Vec::new();
-        let stream = futures_util::stream::iter(ranges.map(Ok::<_, io::Error>));
+        let stream = with_1000_roi(ranges.map(Ok::<_, io::Error>));
         let writer = AsyncRangeWriter::new(
-            &mut buf,
-            stream,
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            &mut buf, stream,
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
         let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
@@ -601,8 +623,8 @@ mod tests {
         let writer = Vec::new();
         let _err = AsyncRangeWriter::new(
             writer,
-            futures_util::stream::iter(input),
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            with_1000_roi(input),
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         )
         .await
         .unwrap_err();
@@ -622,8 +644,8 @@ mod tests {
         let ranges = vec![10..=20u64, 15..=25];
         let writer = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(ranges),
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            with_1000_roi(ranges),
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::InvalidData));
@@ -635,8 +657,8 @@ mod tests {
         let ranges = vec![50..=60u64, 10..=20];
         let writer = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(ranges),
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            with_1000_roi(ranges),
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = writer.await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::InvalidData));
@@ -716,8 +738,8 @@ mod tests {
         let mut buf = Vec::new();
         let writer = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(ranges),
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            with_1000_roi(ranges),
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         writer.await.unwrap();
         let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
@@ -731,8 +753,8 @@ mod tests {
         let mut buf = Vec::new();
         let writer = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(ranges),
-            Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
+            with_1000_roi(ranges),
+            // Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
         let reader = AsyncRangeStream::new(&buf[..]).await.unwrap();
@@ -805,8 +827,8 @@ mod tests {
         let ranges = vec![10..=20u64];
         let async_writer = AsyncRangeWriter::new(
             writer,
-            futures_util::stream::iter(ranges),
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            with_1000_roi(ranges),
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         );
         let result = async_writer.await;
         let Err(e) = result else {
@@ -821,8 +843,8 @@ mod tests {
         let mut buf = Vec::new();
         let writer = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(global_ranges.clone()),
-            Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
+            with_1000_roi(global_ranges.clone()),
+            // Roi::new(0, 0, NONZERO_1000, NONZERO_1000),
         );
         writer.await.unwrap();
 
@@ -861,8 +883,15 @@ mod tests {
         let mut buf = Vec::new();
         let writer = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(global_ranges.clone()),
-            Roi::new(offset_x, offset_y, width, height),
+            WithRoi::new(
+                futures_util::stream::iter(global_ranges.clone()),
+                Rect {
+                    x: offset_x,
+                    y: offset_y,
+                    width,
+                    height,
+                },
+            ), // Roi::new(offset_x, offset_y, width, height),
         );
         writer.await.unwrap();
 
@@ -899,11 +928,10 @@ mod tests {
             let mut buf = Vec::new();
             AsyncRangeWriter::new(
                 &mut buf,
-                futures_util::stream::iter(sorted.iter_roi::<NonZeroRange<u64>>()),
-                roi,
+                with_1000_roi(sorted.iter_roi::<NonZeroRange<u64>>()),
+                // roi,
             )
-            .await
-            .unwrap();
+            .await?;
             buf
         };
 
@@ -912,7 +940,7 @@ mod tests {
         assert_eq!(roi, reader_roi);
 
         let mut phase2_buf = Vec::new();
-        AsyncRangeWriter::new(&mut phase2_buf, reader, reader_roi)
+        AsyncRangeWriter::new(&mut phase2_buf, reader /*  reader_roi*/)
             .await
             .unwrap();
 
@@ -933,8 +961,8 @@ mod tests {
         let mut buf = Vec::new();
         let result = AsyncRangeWriter::new(
             &mut buf,
-            futures_util::stream::iter(ranges),
-            Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
+            with_1000_roi(ranges),
+            // Roi::new(0, 0, NonZeroU32::MIN, NonZeroU32::MIN),
         )
         .await;
         assert!(matches!(result, Err(e) if e.kind() == ErrorKind::Other));
