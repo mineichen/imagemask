@@ -34,11 +34,22 @@ pub struct SortedRangesMap<TIncluded, TExcluded, TMeta> {
     meta: TMeta,
     bounds: Rect<u32>,
 }
-impl<TIncluded, TExcluded, TMeta> Debug for SortedRangesMap<TIncluded, TExcluded, TMeta> {
+impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>, TMeta: Debug> Debug
+    for SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SortedRangesMap")
-            .field("range_count", &self.included.len())
-            .finish()
+        const NUMBER_OF_DEBUG_ELEMENTS: usize = 10;
+        let mut x = f.debug_tuple("SortedRangesMap");
+
+        for item in self.iter::<Range<u64>>() {
+            x.field(&item);
+        }
+
+        let more = self.included.len().saturating_sub(NUMBER_OF_DEBUG_ELEMENTS);
+        if more > 0 {
+            x.field(&format_args!("...and {} more", self.included.len()));
+        }
+        x.finish()
     }
 }
 

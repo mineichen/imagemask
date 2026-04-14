@@ -4,7 +4,9 @@ use std::{
 };
 
 use crate::{CreateRange, RangeToOffsetsIterMap, SortedRangesMap, UncheckedCast};
-impl<TIncluded, TExcluded, TMeta> SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>> {
+impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>, TMeta: Debug>
+    SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>
+{
     pub fn map_inplace<TIter, TFun>(self, f: TFun) -> Option<Self>
     where
         TIter: Iterator<Item = (RangeInclusive<u64>, TMeta)>,
