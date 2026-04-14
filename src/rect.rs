@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::Add};
 
 use crate::{CreateRange, NonZeroRange, RectIterator, SignedNonZeroable};
 
@@ -35,6 +35,13 @@ impl<T: SignedNonZeroable> Rect<T> {
         }
     }
 
+    pub fn len_x(&self) -> T::NonZero
+    where
+        T: Add<Output = T> + Copy,
+    {
+        T::create_non_zero(self.x + self.width.into()).expect("Only fails, if addition overflows")
+    }
+
     pub fn range_x(&self) -> NonZeroRange<T>
     where
         NonZeroRange<T>: CreateRange<Item = T>,
@@ -46,7 +53,7 @@ impl<T: SignedNonZeroable> Rect<T> {
     pub fn into_rect_iter<R: CreateRange<Item = T>>(
         self,
         global_width: T::NonZero,
-    ) -> RectIterator<T, R>
+    ) -> RectIterator<R>
     where
         T: num_traits::Zero
             + Copy

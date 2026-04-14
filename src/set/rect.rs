@@ -9,19 +9,19 @@ use num_traits::Zero;
 
 use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable};
 
-pub struct RectIterator<T: SignedNonZeroable, R> {
-    pub kind: RectIteratorKind<T, R>,
-    width: T::NonZero,
-    height: T::NonZero,
+pub struct RectIterator<R: CreateRange<Item: SignedNonZeroable>> {
+    pub kind: RectIteratorKind<R>,
+    width: <R::Item as SignedNonZeroable>::NonZero,
+    height: <R::Item as SignedNonZeroable>::NonZero,
 }
 
-#[derive(Clone)]
-pub enum RectIteratorKind<T: SignedNonZeroable, R> {
+// #[derive(Clone)]
+pub enum RectIteratorKind<R: CreateRange<Item: SignedNonZeroable>> {
     FullWidth(Once<R>),
-    PartialWidth(PartialWidthRectIterator<T, R>),
+    PartialWidth(PartialWidthRectIterator<R>),
 }
 
-impl<R> ImageDimension for RectIterator<u32, R> {
+impl<R: CreateRange<Item = u32>> ImageDimension for RectIterator<R> {
     fn width(&self) -> std::num::NonZero<u32> {
         self.width
     }
@@ -36,23 +36,24 @@ impl<R> ImageDimension for RectIterator<u32, R> {
     }
 }
 
-impl<T, R> RectIterator<T, R>
+impl<R> RectIterator<R>
 where
-    T: SignedNonZeroable<NonZero: PartialOrd>
-        + Mul<Output = T>
-        + Add<Output = T>
-        + Copy
-        + Zero
-        + Debug
-        + PartialEq,
-    R: CreateRange<Item = T>,
+    R: CreateRange<
+        Item: SignedNonZeroable<NonZero: PartialOrd>
+                  + Mul<Output = R::Item>
+                  + Add<Output = R::Item>
+                  + Copy
+                  + Zero
+                  + Debug
+                  + PartialEq,
+    >,
 {
     pub fn new(
-        x: T,
-        y: T,
-        width: T::NonZero,
-        height: T::NonZero,
-        global_width: T::NonZero,
+        x: R::Item,
+        y: R::Item,
+        width: <R::Item as SignedNonZeroable>::NonZero,
+        height: <R::Item as SignedNonZeroable>::NonZero,
+        global_width: <R::Item as SignedNonZeroable>::NonZero,
     ) -> Self {
         debug_assert!(width <= global_width);
         let kind = if width < global_width {
@@ -64,24 +65,27 @@ where
                 global_width,
             ))
         } else {
-            debug_assert_eq!(x, T::zero(), "x must be zero for full width ranges");
+            debug_assert_eq!(
+                x,
+                <R::Item as Zero>::zero(),
+                "x must be zero for full width ranges"
+            );
             let start = y * global_width.into();
-            let len = T::create_non_zero(height.into() * global_width.into())
+            let len = R::Item::create_non_zero(height.into() * global_width.into())
                 .expect("Only happens on overflow");
             RectIteratorKind::FullWidth(std::iter::once(R::new_debug_checked(start, len)))
         };
         Self {
             kind,
             width: global_width,
-            height: T::create_non_zero(height.into() + y).unwrap(),
+            height: R::Item::create_non_zero(height.into() + y).unwrap(),
         }
     }
 }
 
-impl<T, R> Iterator for RectIterator<T, R>
+impl<R> Iterator for RectIterator<R>
 where
-    T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd,
-    R: CreateRange<Item = T>,
+    R: CreateRange<Item: Add<Output = R::Item> + Copy + SignedNonZeroable + PartialOrd>,
 {
     type Item = R;
 
@@ -89,10 +93,9 @@ where
         self.kind.next()
     }
 }
-impl<T, R> Iterator for RectIteratorKind<T, R>
+impl<R> Iterator for RectIteratorKind<R>
 where
-    T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd,
-    R: CreateRange<Item = T>,
+    R: CreateRange<Item: Add<Output = R::Item> + Copy + SignedNonZeroable + PartialOrd>,
 {
     type Item = R;
 
@@ -103,30 +106,35 @@ where
         }
     }
 }
-impl<T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd, R: CreateRange<Item = T>>
-    FusedIterator for RectIterator<T, R>
+impl<R: CreateRange<Item: Add<Output = R::Item> + Copy + SignedNonZeroable + PartialOrd>>
+    FusedIterator for RectIterator<R>
 {
 }
 
 #[derive(Clone)]
-pub struct PartialWidthRectIterator<T: SignedNonZeroable, R> {
-    start_index: T,
-    end_index: T,
-    width: T::NonZero,
-    image_width: T::NonZero,
+pub struct PartialWidthRectIterator<R: CreateRange<Item: SignedNonZeroable>> {
+    start_index: R::Item,
+    end_index: R::Item,
+    width: <R::Item as SignedNonZeroable>::NonZero,
+    image_width: <R::Item as SignedNonZeroable>::NonZero,
     _range: PhantomData<R>,
 }
 
-impl<T, R> PartialWidthRectIterator<T, R>
+impl<R> PartialWidthRectIterator<R>
 where
-    T: SignedNonZeroable<NonZero: PartialOrd> + Mul<Output = T> + Add<Output = T> + Copy,
+    R: CreateRange<
+        Item: SignedNonZeroable<NonZero: PartialOrd>
+                  + Mul<Output = R::Item>
+                  + Add<Output = R::Item>
+                  + Copy,
+    >,
 {
     pub fn new(
-        x: T,
-        y: T,
-        width: T::NonZero,
-        height: T::NonZero,
-        global_width: T::NonZero,
+        x: R::Item,
+        y: R::Item,
+        width: <R::Item as SignedNonZeroable>::NonZero,
+        height: <R::Item as SignedNonZeroable>::NonZero,
+        global_width: <R::Item as SignedNonZeroable>::NonZero,
     ) -> Self {
         debug_assert!(width < global_width);
         let start_index = x + y * global_width.into();
@@ -141,10 +149,9 @@ where
     }
 }
 
-impl<T, R> Iterator for PartialWidthRectIterator<T, R>
+impl<R> Iterator for PartialWidthRectIterator<R>
 where
-    T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd,
-    R: CreateRange<Item = T>,
+    R: CreateRange<Item: Add<Output = R::Item> + Copy + SignedNonZeroable + PartialOrd>,
 {
     type Item = R;
 
@@ -158,8 +165,8 @@ where
         }
     }
 }
-impl<T: Add<Output = T> + Copy + SignedNonZeroable + PartialOrd, R: CreateRange<Item = T>>
-    FusedIterator for PartialWidthRectIterator<T, R>
+impl<R: CreateRange<Item: Add<Output = R::Item> + Copy + SignedNonZeroable + PartialOrd>>
+    FusedIterator for PartialWidthRectIterator<R>
 {
 }
 
@@ -172,19 +179,19 @@ mod range_set_blaze_interop {
 
     use super::*;
 
-    impl<T> SortedStarts<T> for RectIterator<T, RangeInclusive<T>> where
+    impl<T> SortedStarts<T> for RectIterator<RangeInclusive<T>> where
         T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd
     {
     }
     impl<T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd>
-        SortedDisjoint<T> for PartialWidthRectIterator<T, RangeInclusive<T>>
+        SortedDisjoint<T> for PartialWidthRectIterator<RangeInclusive<T>>
     {
     }
-    impl<T> SortedStarts<T> for PartialWidthRectIterator<T, RangeInclusive<T>> where
+    impl<T> SortedStarts<T> for PartialWidthRectIterator<RangeInclusive<T>> where
         T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd
     {
     }
-    impl<T> SortedDisjoint<T> for RectIterator<T, RangeInclusive<T>> where
+    impl<T> SortedDisjoint<T> for RectIterator<RangeInclusive<T>> where
         T: Add<Output = T> + Sub<Output = T> + Integer + One + SignedNonZeroable + PartialOrd
     {
     }
