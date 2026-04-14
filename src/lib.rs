@@ -13,6 +13,9 @@ mod rect;
 mod set;
 mod unchecked_cast;
 mod with_bounds;
+mod with_roi;
+
+use std::num::NonZero;
 
 pub use assert_sorted_iter::*;
 #[cfg(feature = "async-io")]
@@ -24,6 +27,7 @@ pub use rect::*;
 pub use set::*;
 pub use unchecked_cast::*;
 pub use with_bounds::*;
+pub use with_roi::*;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct OrderedRangeItem<TMeta> {
@@ -36,4 +40,9 @@ impl<TMeta> OrderedRangeItem<TMeta> {
     pub fn comparator(&self) -> (u32, u32) {
         (self.range.start, u32::MAX - self.priority)
     }
+}
+
+pub trait ImageDimension {
+    fn bounds(&self) -> Rect<u32>;
+    fn width(&self) -> NonZero<u32>;
 }

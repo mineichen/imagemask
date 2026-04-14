@@ -5,27 +5,21 @@ use crate::{ImageDimension, Rect};
 #[cfg(feature = "async-io")]
 pin_project_lite::pin_project! {
     #[derive(Clone, Debug)]
-    pub struct WithBounds<I> {
+    pub struct WithRoi<I> {
         #[pin] inner: I,
-        width: NonZero<u32>,
-        height: NonZero<u32>
+        roi: Rect<u32>,
     }
 }
 #[cfg(not(feature = "async-io"))]
 #[derive(Clone, Debug)]
-pub struct WithBounds<I> {
+pub struct WithRoi<I> {
     inner: I,
-    width: NonZero<u32>,
-    height: NonZero<u32>,
+    roi: Rect<u32>,
 }
 
-impl<I> WithBounds<I> {
-    pub fn new(inner: I, width: NonZero<u32>, height: NonZero<u32>) -> Self {
-        Self {
-            inner,
-            width,
-            height,
-        }
+impl<I> WithRoi<I> {
+    pub fn new(inner: I, roi: Rect<u32>) -> Self {
+        Self { inner, roi }
     }
 
     pub fn into_inner(self) -> I {
@@ -33,7 +27,7 @@ impl<I> WithBounds<I> {
     }
 }
 
-impl<I: Iterator> Iterator for WithBounds<I> {
+impl<I: Iterator> Iterator for WithRoi<I> {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -46,7 +40,7 @@ impl<I: Iterator> Iterator for WithBounds<I> {
 }
 
 #[cfg(feature = "async-io")]
-impl<I: futures_core::Stream> futures_core::Stream for WithBounds<I> {
+impl<I: futures_core::Stream> futures_core::Stream for WithRoi<I> {
     type Item = I::Item;
 
     fn poll_next(
@@ -58,19 +52,14 @@ impl<I: futures_core::Stream> futures_core::Stream for WithBounds<I> {
     }
 }
 
-impl<I: FusedIterator> FusedIterator for WithBounds<I> {}
+impl<I: FusedIterator> FusedIterator for WithRoi<I> {}
 
-impl<I> ImageDimension for WithBounds<I> {
+impl<I> ImageDimension for WithRoi<I> {
     fn bounds(&self) -> Rect<u32> {
-        Rect {
-            x: 0,
-            y: 0,
-            width: self.width,
-            height: self.height,
-        }
+        self.roi
     }
     fn width(&self) -> NonZero<u32> {
-        self.width
+        self.roi.width
     }
 }
 
@@ -79,13 +68,13 @@ mod with_bounds_range_set_blaze_0_5 {
     use super::*;
     use range_set_blaze_0_5::{Integer, SortedDisjoint, SortedStarts};
 
-    impl<T, TRangeItem> SortedStarts<TRangeItem> for WithBounds<T>
+    impl<T, TRangeItem> SortedStarts<TRangeItem> for WithRoi<T>
     where
         T: SortedStarts<TRangeItem>,
         TRangeItem: Integer,
     {
     }
-    impl<T, TRangeItem> SortedDisjoint<TRangeItem> for WithBounds<T>
+    impl<T, TRangeItem> SortedDisjoint<TRangeItem> for WithRoi<T>
     where
         T: SortedDisjoint<TRangeItem>,
         TRangeItem: Integer,

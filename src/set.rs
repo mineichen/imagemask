@@ -227,8 +227,10 @@ impl<TIncluded, TExcluded> SortedRanges<TIncluded, TExcluded> {
     /// Collects
     pub fn try_from_ordered_iter<TIter>(iter: TIter) -> Result<Self, io::Error>
     where
-        TIter: IntoIterator<Item: CreateRange<Item: TryInto<u64, Error: Display>>>,
-        TIter::IntoIter: ImageDimension,
+        TIter: IntoIterator<
+                Item: CreateRange<Item: TryInto<u64, Error: Display>>,
+                IntoIter: ImageDimension,
+            >,
         TIncluded: TryFrom<u64, Error: Display>,
         TExcluded: TryFrom<u64, Error: Display>,
     {
