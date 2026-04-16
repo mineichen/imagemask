@@ -48,7 +48,7 @@ where
             return None;
         }
 
-        let width = self.max_column + 1;
+        let width = self.max_column - self.min_column + 1;
         let height = self.max_row - self.min_row + 1;
 
         Some(Rect::new(
@@ -88,9 +88,8 @@ where
         let start_row = (start / width_val).cast_unchecked();
         let start_col = (start % width_val).cast_unchecked();
 
-        let last = end - R::Item::one();
-        let end_row = (last / width_val).cast_unchecked();
-        let end_col = (last % width_val).cast_unchecked();
+        let end_row = (end / width_val).cast_unchecked();
+        let end_col = (end % width_val).cast_unchecked();
 
         self.min_row = self.min_row.min(start_row);
         self.max_row = self.max_row.max(end_row);
@@ -179,6 +178,18 @@ mod tests {
         let count = (&mut inspector).count();
         assert_eq!(count, 3);
         let b = const { Rect::new(0, 0, NonZero::new(10).unwrap(), NonZero::new(7).unwrap()) };
+        assert_eq!(inspector.bounds(), Some(b));
+        assert_eq!(inspector.width(), WIDTH_U32);
+    }
+
+    #[test]
+    fn multiple_ranges_with_offset() {
+        let mut inspector = [13..18usize, 32..33]
+            .with_bounds(WIDTH_U32, WIDTH_U32)
+            .inspect_bounds();
+        // let mut inspector = BoundsInspector::<_, Range<usize>>::new(source);
+        assert_eq!(2, (&mut inspector).count());
+        let b = const { Rect::new(2, 1, NonZero::new(7).unwrap(), NonZero::new(3).unwrap()) };
         assert_eq!(inspector.bounds(), Some(b));
         assert_eq!(inspector.width(), WIDTH_U32);
     }
