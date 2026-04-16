@@ -2,6 +2,7 @@ use std::{iter::FusedIterator, marker::PhantomData};
 
 use crate::{CreateRange, SignedNonZeroable, UncheckedCast};
 
+#[derive(Clone)]
 pub struct SortedRangesMapIter<TIncludedIter, TExcludedIter, TMetaIter, TRange: CreateRange> {
     include: TIncludedIter,
     excluded: TExcludedIter,

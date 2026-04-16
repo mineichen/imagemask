@@ -34,7 +34,7 @@ impl<T: SignedNonZeroable> Rect<T> {
             height,
         }
     }
-
+    /// Offset.x + width
     pub fn len_x(&self) -> T::NonZero
     where
         T: Add<Output = T> + Copy,

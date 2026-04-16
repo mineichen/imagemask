@@ -44,7 +44,6 @@ where
     }
 
     pub fn bounds(&self) -> Option<Rect<u32>> {
-        dbg!(self);
         if self.max_row < self.min_row {
             return None;
         }
@@ -97,11 +96,9 @@ where
         self.max_row = self.max_row.max(end_row);
 
         if start_row == end_row {
-            println!("Equal");
             self.min_column = self.min_column.min(start_col);
             self.max_column = self.max_column.max(end_col);
         } else {
-            println!("Not Equal {}", width_u32);
             self.min_column = 0;
             self.max_column = width_u32 - 1;
         }

@@ -38,18 +38,25 @@ impl<TIncluded: UncheckedCast<u64>, TExcluded: UncheckedCast<u64>, TMeta: Debug>
     for SortedRangesMap<TIncluded, TExcluded, Vec<TMeta>>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        const NUMBER_OF_DEBUG_ELEMENTS: usize = 10;
-        let mut x = f.debug_tuple("SortedRangesMap");
-
-        for item in self.iter::<Range<u64>>() {
-            x.field(&item);
+        struct DebugIter<T>(T);
+        impl<T: IntoIterator<Item: Debug> + Clone> Debug for DebugIter<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_list().entries(self.0.clone().into_iter()).finish()
+            }
         }
 
+        const NUMBER_OF_DEBUG_ELEMENTS: usize = 10;
+        let mut s = f.debug_struct("SortedRangesMap");
+        s.field("elements", &DebugIter(self.iter::<Range<u64>>()));
+        s.field("bounds", &self.bounds);
         let more = self.included.len().saturating_sub(NUMBER_OF_DEBUG_ELEMENTS);
         if more > 0 {
-            x.field(&format_args!("...and {} more", self.included.len()));
+            s.field(
+                "additional_elements",
+                &format_args!("...and {} more", self.included.len()),
+            );
         }
-        x.finish()
+        s.finish()
     }
 }
 
