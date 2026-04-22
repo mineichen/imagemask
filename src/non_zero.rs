@@ -25,8 +25,8 @@ pub struct RangeUnchecked<T> {
 impl NonZeroRange<u64> {
     pub fn with_offset(&self, offset: i64) -> Self {
         NonZeroRange(RangeUnchecked {
-            start: self.0.start.strict_add_signed(offset),
-            end: self.0.end.strict_add_signed(offset),
+            start: self.0.start.checked_add_signed(offset).expect("Overflow"),
+            end: self.0.end.checked_add_signed(offset).expect("Overflow"),
         })
     }
 
