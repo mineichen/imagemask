@@ -110,7 +110,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let mut iter = (&mut self.iter).map(|x| {
             let (start, end) = (*x.start(), *x.end());
-            if start < end {
+            if start <= end {
                 Ok(x)
             } else {
                 Err(SanitizeSortedDisjointError::StartAfterEnd { start, end })
@@ -202,6 +202,16 @@ mod range_set_blaze_0_5_interop {
 mod tests {
 
     use super::*;
+
+    #[test]
+    pub fn test_1px_sanitize() {
+        assert_eq!(
+            Some(0u32..=0),
+            SanitizeSortedDisjoint::new([0..=0])
+                .map(|x: RangeInclusive<u32>| x)
+                .next()
+        );
+    }
 
     #[cfg(feature = "range-set-blaze-0_5")]
     mod range_set_blaze_0_5_interop {
