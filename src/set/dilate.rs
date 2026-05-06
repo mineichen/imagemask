@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::iter::FusedIterator;
 use std::ops::Add;
 
-use num_traits::{CheckedSub, One, SaturatingSub, Zero, one};
+use num_traits::{CheckedSub, One, SaturatingSub, Zero};
 use range_set_blaze_0_5::{CheckSortedDisjoint, DynSortedDisjoint, Integer, SortedDisjoint};
 
 use crate::{
@@ -74,8 +74,8 @@ where
             .map(|o| {
                 let one = <TIter::Item as CreateRange>::Item::one();
                 let o_start = o * width.cast_unchecked();
-                let o_end = o * width.cast_unchecked() + one;
-                CheckSortedDisjoint::new(iter.clone().map(move |r| {
+                let o_end = o_start - one;
+                CheckSortedDisjoint::new(create_inner(offset.into()).map(move |r| {
                     let start = r.start() + o_start;
                     let end = r.end() + o_end;
                     start..=end
