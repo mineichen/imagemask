@@ -21,7 +21,7 @@ use crate::{CreateRange, ImageDimension};
 /// let mut iter = SanitizeSortedDisjoint::new([0u8..=1, 2u8..=0u8]);
 /// let result = (&mut iter).collect::<Vec<_>>();
 /// assert_eq!(vec![0u8..=1], result);
-/// assert_eq!(Err(SanitizeSortedDisjointError::StartAfterEnd { start: 2, end: 1 }), iter.into_result());
+/// assert_eq!(Err(SanitizeSortedDisjointError::StartAfterEnd { start: 2, end_exclusive: 1 }), iter.into_result());
 /// ```
 ///
 /// ```
@@ -30,7 +30,7 @@ use crate::{CreateRange, ImageDimension};
 /// let mut iter = SanitizeSortedDisjoint::new([10u8..=11, 9u8..=10u8]);
 /// let result = (&mut iter).collect::<Vec<_>>();
 /// assert_eq!(vec![10u8..=11], result);
-/// assert_eq!(Err(SanitizeSortedDisjointError::SmallerStartYielded { start: 9, end: 11, last_start: 10 }), iter.into_result());
+/// assert_eq!(Err(SanitizeSortedDisjointError::SmallerStartYielded { start: 9, end_exclusive: 11, last_start: 10 }), iter.into_result());
 /// ```
 ///
 pub struct SanitizeSortedDisjoint<I: Iterator<Item: CreateRange<Item: Debug>>> {

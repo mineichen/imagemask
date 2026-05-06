@@ -17,6 +17,7 @@ use crate::{
 mod bounds_inspector;
 mod chunk_by_row;
 mod clip_2d;
+mod dilate;
 #[cfg(feature = "async-io")]
 mod future;
 mod iter;
@@ -30,6 +31,7 @@ mod split_rows;
 pub use bounds_inspector::*;
 pub use chunk_by_row::*;
 pub use clip_2d::*;
+pub use dilate::*;
 pub use iter::*;
 pub use iter_global::*;
 pub use map_inplace::*;
