@@ -68,7 +68,10 @@ pub trait ImaskSet: IntoIterator + Sized {
         SplitRowsIter::new(self.into_iter())
     }
 
-    fn sanitize_sorted_disjoint<R: Debug>(self) -> SanitizeSortedDisjoint<Self::IntoIter, R> {
+    fn sanitize_sorted_disjoint(self) -> SanitizeSortedDisjoint<Self::IntoIter>
+    where
+        Self::Item: CreateRange<Item: Debug>,
+    {
         SanitizeSortedDisjoint::new(self.into_iter())
     }
 

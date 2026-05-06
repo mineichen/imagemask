@@ -1,6 +1,6 @@
 use std::{fmt::Debug, iter::FusedIterator, num::NonZero, ops::RangeInclusive};
 
-use crate::ImageDimension;
+use crate::{CreateRange, ImageDimension};
 
 /// Sanitize a SortedStarts into a disjoint iterator of ranges. Iteration stops when error is detected.
 /// It will merge adjacent ranges but fail, if a item with a smaller start than the current accumulator.start is found, as this could mean, that the output would not be sorted.
@@ -21,7 +21,7 @@ use crate::ImageDimension;
 /// let mut iter = SanitizeSortedDisjoint::new([0u8..=1, 2u8..=0u8]);
 /// let result = (&mut iter).collect::<Vec<_>>();
 /// assert_eq!(vec![0u8..=1], result);
-/// assert_eq!(Err(SanitizeSortedDisjointError::StartAfterEnd { start: 2, end: 0 }), iter.into_result());
+/// assert_eq!(Err(SanitizeSortedDisjointError::StartAfterEnd { start: 2, end: 1 }), iter.into_result());
 /// ```
 ///
 /// ```
@@ -30,32 +30,40 @@ use crate::ImageDimension;
 /// let mut iter = SanitizeSortedDisjoint::new([10u8..=11, 9u8..=10u8]);
 /// let result = (&mut iter).collect::<Vec<_>>();
 /// assert_eq!(vec![10u8..=11], result);
-/// assert_eq!(Err(SanitizeSortedDisjointError::SmallerStartYielded { start: 9, end: 10, last_start: 10 }), iter.into_result());
+/// assert_eq!(Err(SanitizeSortedDisjointError::SmallerStartYielded { start: 9, end: 11, last_start: 10 }), iter.into_result());
 /// ```
 ///
-pub struct SanitizeSortedDisjoint<I, T: Debug> {
+pub struct SanitizeSortedDisjoint<I: Iterator<Item: CreateRange<Item: Debug>>> {
     iter: I,
-    state: SanitizeSortedDisjointState<T>,
+    state: SanitizeSortedDisjointState<I::Item>,
 }
 
-#[derive(Debug, Default)]
-enum SanitizeSortedDisjointState<T> {
-    Pending(RangeInclusive<T>),
-    Error(SanitizeSortedDisjointError<T>),
-    #[default]
+#[derive(Debug)]
+enum SanitizeSortedDisjointState<TRange: CreateRange> {
+    Pending(TRange),
+    Error(SanitizeSortedDisjointError<TRange::Item>),
     Fresh,
+}
+impl<TRange: CreateRange> Default for SanitizeSortedDisjointState<TRange> {
+    fn default() -> Self {
+        SanitizeSortedDisjointState::Fresh
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SanitizeSortedDisjointError<T> {
     #[error("Input not sorted by start")]
-    SmallerStartYielded { start: T, end: T, last_start: T },
+    SmallerStartYielded {
+        start: T,
+        end_exclusive: T,
+        last_start: T,
+    },
 
-    #[error("Start after end: {start} > {end}")]
-    StartAfterEnd { start: T, end: T },
+    #[error("Start after end: {start} >= {end_exclusive}")]
+    StartAfterEnd { start: T, end_exclusive: T },
 }
 
-impl<I, T: Debug> SanitizeSortedDisjoint<I, T> {
+impl<I: Iterator<Item: CreateRange<Item: Debug>>> SanitizeSortedDisjoint<I> {
     pub fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
         Self {
             iter: iter.into_iter(),
@@ -63,7 +71,9 @@ impl<I, T: Debug> SanitizeSortedDisjoint<I, T> {
         }
     }
 
-    pub fn into_result(mut self) -> Result<(), SanitizeSortedDisjointError<T>> {
+    pub fn into_result(
+        mut self,
+    ) -> Result<(), SanitizeSortedDisjointError<<I::Item as CreateRange>::Item>> {
         let mut state = Default::default();
         std::mem::swap(&mut state, &mut self.state);
         if let SanitizeSortedDisjointState::Error(e) = state {
@@ -72,7 +82,9 @@ impl<I, T: Debug> SanitizeSortedDisjoint<I, T> {
             Ok(())
         }
     }
-    pub fn check(mut self) -> Result<Self, SanitizeSortedDisjointError<T>> {
+    pub fn check(
+        mut self,
+    ) -> Result<Self, SanitizeSortedDisjointError<<I::Item as CreateRange>::Item>> {
         let mut state = Default::default();
         std::mem::swap(&mut state, &mut self.state);
         if let SanitizeSortedDisjointState::Error(e) = state {
@@ -84,7 +96,7 @@ impl<I, T: Debug> SanitizeSortedDisjoint<I, T> {
     }
 }
 
-impl<I, T: Debug> Drop for SanitizeSortedDisjoint<I, T> {
+impl<I: Iterator<Item: CreateRange<Item: Debug>>> Drop for SanitizeSortedDisjoint<I> {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
         {
@@ -101,19 +113,21 @@ impl<I, T: Debug> Drop for SanitizeSortedDisjoint<I, T> {
     }
 }
 
-impl<I, T: Debug + num_traits::Unsigned + Ord + Copy> Iterator for SanitizeSortedDisjoint<I, T>
-where
-    I: Iterator<Item = RangeInclusive<T>>,
+impl<I: Iterator<Item: CreateRange<Item: Debug + num_traits::Unsigned + Ord + Copy>>> Iterator
+    for SanitizeSortedDisjoint<I>
 {
-    type Item = RangeInclusive<T>;
+    type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut iter = (&mut self.iter).map(|x| {
-            let (start, end) = (*x.start(), *x.end());
-            if start <= end {
+            let (start, end) = (x.start(), x.end());
+            if start < end {
                 Ok(x)
             } else {
-                Err(SanitizeSortedDisjointError::StartAfterEnd { start, end })
+                Err(SanitizeSortedDisjointError::StartAfterEnd {
+                    start,
+                    end_exclusive: end,
+                })
             }
         });
         let mut last = Default::default();
@@ -140,37 +154,42 @@ where
                     return Some(last);
                 }
                 Some(Ok(next)) => {
-                    let (last_start, next_start) = (*last.start(), *next.start());
-                    let (last_end, next_end) = (*last.end(), *next.end());
+                    let (last_start, next_start) = (last.start(), next.start());
+                    let (last_end, next_end) = (last.end(), next.end());
                     if last_start > next_start {
                         self.state = SanitizeSortedDisjointState::Error(
                             SanitizeSortedDisjointError::SmallerStartYielded {
                                 start: next_start,
-                                end: next_end,
+                                end_exclusive: next_end,
                                 last_start,
                             },
                         );
                         return Some(last);
                     }
-                    if next_start > last_end + T::one() {
+                    if next_start > last_end {
                         self.state = SanitizeSortedDisjointState::Pending(next);
                         return Some(last);
                     }
-                    last = last_start..=last_end.max(next_end);
+                    last = <I::Item as CreateRange>::new_debug_checked_zeroable(
+                        last_start,
+                        last_end.max(next_end),
+                    );
                 }
             }
         }
     }
 }
 
-impl<I, T: Debug + num_traits::Unsigned + Ord + Copy> FusedIterator for SanitizeSortedDisjoint<I, T> where
-    I: FusedIterator<Item = RangeInclusive<T>>
+impl<I> FusedIterator for SanitizeSortedDisjoint<I>
+where
+    I: FusedIterator<Item: CreateRange<Item: Debug>>,
+    SanitizeSortedDisjoint<I>: Iterator,
 {
 }
 
-impl<I, T: Debug> ImageDimension for SanitizeSortedDisjoint<I, T>
+impl<I> ImageDimension for SanitizeSortedDisjoint<I>
 where
-    I: crate::ImageDimension,
+    I: Iterator<Item: CreateRange<Item: Debug>> + crate::ImageDimension,
 {
     fn width(&self) -> NonZero<u32> {
         self.iter.width()
@@ -188,12 +207,16 @@ mod range_set_blaze_0_5_interop {
 
     use super::*;
 
-    impl<I, T: Integer + num_traits::Unsigned> SortedStarts<T> for SanitizeSortedDisjoint<I, T> where
-        I: FusedIterator<Item = RangeInclusive<T>>
+    impl<I, T: Integer + num_traits::Unsigned + Debug> SortedStarts<T> for SanitizeSortedDisjoint<I>
+    where
+        I: FusedIterator<Item = RangeInclusive<T>>,
+        I::Item: CreateRange<Item = T>,
     {
     }
-    impl<I, T: Integer + num_traits::Unsigned> SortedDisjoint<T> for SanitizeSortedDisjoint<I, T> where
-        I: FusedIterator<Item = RangeInclusive<T>>
+    impl<I, T: Integer + num_traits::Unsigned + Debug> SortedDisjoint<T> for SanitizeSortedDisjoint<I>
+    where
+        I: FusedIterator<Item = RangeInclusive<T>>,
+        I::Item: CreateRange<Item = T>,
     {
     }
 }
@@ -271,7 +294,7 @@ mod tests {
     #[test]
     #[cfg_attr(
         debug_assertions,
-        should_panic(expected = "StartAfterEnd { start: 10, end: 9 }")
+        should_panic(expected = "StartAfterEnd { start: 10, end_exclusive: 10 }")
     )]
     fn range_with_end_bigger_start_after_initial() {
         assert_eq!(
@@ -283,7 +306,7 @@ mod tests {
     #[test]
     #[cfg_attr(
         debug_assertions,
-        should_panic(expected = "StartAfterEnd { start: 10, end: 9 }")
+        should_panic(expected = "StartAfterEnd { start: 10, end_exclusive: 10 }")
     )]
     #[cfg_attr(
         not(debug_assertions),
@@ -303,7 +326,9 @@ mod tests {
     #[test]
     #[cfg_attr(
         debug_assertions,
-        should_panic(expected = "SmallerStartYielded { start: 1, end: 3, last_start: 5 }")
+        should_panic(
+            expected = "SmallerStartYielded { start: 1, end_exclusive: 4, last_start: 5 }"
+        )
     )]
     fn out_of_order_panics() {
         assert_eq!(1, SanitizeSortedDisjoint::new([5u32..=7, 1..=3]).count());
@@ -330,7 +355,9 @@ mod tests {
     #[test]
     #[cfg_attr(
         debug_assertions,
-        should_panic(expected = "SmallerStartYielded { start: 0, end: 103, last_start: 1 }")
+        should_panic(
+            expected = "SmallerStartYielded { start: 0, end_exclusive: 104, last_start: 1 }"
+        )
     )]
     fn out_of_order_with_sooner_start_then_accumulator_start() {
         assert_eq!(
@@ -417,7 +444,9 @@ mod tests {
     #[test]
     #[cfg_attr(
         debug_assertions,
-        should_panic(expected = "SmallerStartYielded { start: 1, end: 15, last_start: 20 }")
+        should_panic(
+            expected = "SmallerStartYielded { start: 1, end_exclusive: 16, last_start: 20 }"
+        )
     )]
     fn same_start_varied_ends_interleaved_with_others_panics() {
         assert_eq!(
