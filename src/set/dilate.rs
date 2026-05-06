@@ -2,46 +2,131 @@ use std::fmt::Debug;
 use std::iter::FusedIterator;
 use std::ops::Add;
 
-use num_traits::SaturatingSub;
+use num_traits::{CheckedSub, One, SaturatingSub, Zero, one};
+use range_set_blaze_0_5::{CheckSortedDisjoint, DynSortedDisjoint, Integer, SortedDisjoint};
 
-use crate::{CreateRange, SanitizeSortedDisjoint};
+use crate::{
+    CreateRange, ImageDimension, SanitizeSortedDisjoint, SignedNonZeroable, UncheckedCast,
+};
 
-pub struct DilateIter<TIter>
-where
-    TIter: Iterator<
-        Item: CreateRange<
-            Item: Debug
-                      + Add<Output = <TIter::Item as CreateRange>::Item>
-                      + SaturatingSub<Output = <TIter::Item as CreateRange>::Item>
-                      + Copy,
-        >,
-    >,
-{
-    // parent: UnionIter<<TIter::Item as CreateRange>::Item, DilateXIter<TIter>>,
-    //
-    parent: SanitizeSortedDisjoint<DilateXIter<TIter>>,
+// pub struct DilateIter<TIter>
+// where
+//     TIter: Iterator<
+//         Item: CreateRange<
+//             Item: Debug
+//                       + Add<Output = <TIter::Item as CreateRange>::Item>
+//                       + SaturatingSub<Output = <TIter::Item as CreateRange>::Item>
+//                       + Copy,
+//         >,
+//     >,
+// {
+//     parent: SanitizeSortedDisjoint<DilateXIter<TIter>>,
+// }
+pub struct DilateIter<'a, T: CreateRange<Item: Integer>> {
+    parent: DynSortedDisjoint<'a, T::Item>,
 }
-
-impl<TIter> Iterator for DilateIter<TIter>
+impl<'a, TItem> DilateIter<'a, TItem>
 where
-    TIter: Iterator<
-        Item: CreateRange<
-            Item: Add<Output = <TIter::Item as CreateRange>::Item>
-                      + SaturatingSub<Output = <TIter::Item as CreateRange>::Item>
+    TItem: 'static
+        + CreateRange<
+            Item: Debug
+                      + Add<Output = TItem::Item>
+                      + SaturatingSub<Output = TItem::Item>
+                      + CheckedSub<Output = TItem::Item>
                       + Copy
-                      + Debug,
+                      + Integer
+                      + Zero
+                      + One,
         >,
-    >,
-    SanitizeSortedDisjoint<DilateXIter<TIter>>: Iterator<Item = TIter::Item>,
+    u32: UncheckedCast<TItem::Item>,
 {
-    type Item = TIter::Item;
+    pub fn new<TIter>(
+        iter: TIter,
+        offset: <<TIter::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
+    ) -> Self
+    where
+        TIter: 'a + FusedIterator<Item = TItem> + Clone + ImageDimension,
+        SanitizeSortedDisjoint<DilateXIter<TIter>>: Iterator<Item = TIter::Item>,
+    {
+        let width = iter.width().get();
+        let create_inner = |offset| {
+            SanitizeSortedDisjoint::new(DilateXIter {
+                offset,
+                parent: iter.clone(),
+            })
+        };
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.parent.next()
+        let mut before = <TIter::Item as CreateRange>::Item::one()
+            .iter_steps(offset)
+            .map(|o| {
+                let one = <TIter::Item as CreateRange>::Item::one();
+                let o_start = o * width.cast_unchecked();
+                let o_end = o * width.cast_unchecked() + one;
+                CheckSortedDisjoint::new(create_inner(offset.into()).filter_map(move |r| {
+                    let end = r.end().checked_sub(&o_end)?;
+                    let start = r.start().saturating_sub(&o_start);
+                    Some(start..=end)
+                }))
+            })
+            .into_iter();
+        let after = <TIter::Item as CreateRange>::Item::one()
+            .iter_steps(offset)
+            .map(|o| {
+                let one = <TIter::Item as CreateRange>::Item::one();
+                let o_start = o * width.cast_unchecked();
+                let o_end = o * width.cast_unchecked() + one;
+                CheckSortedDisjoint::new(iter.clone().map(move |r| {
+                    let start = r.start() + o_start;
+                    let end = r.end() + o_end;
+                    start..=end
+                }))
+            })
+            .into_iter();
+        let original = CheckSortedDisjoint::new(iter.clone().map(|r| {
+            let one = <TIter::Item as CreateRange>::Item::one();
+            let start = r.start();
+            let end = r.end() - one;
+            start..=end
+        }));
+
+        let first = before
+            .next()
+            .expect("Always ads at least one per direction");
+        let acc = before.fold(DynSortedDisjoint::new(first), |acc, n| {
+            DynSortedDisjoint::new(acc.union(n))
+        });
+        let acc = after.fold(acc, |acc, n| DynSortedDisjoint::new(acc.union(n)));
+        let acc: DynSortedDisjoint<'a, <<TIter as Iterator>::Item as CreateRange>::Item> =
+            DynSortedDisjoint::new(acc.union(original));
+
+        Self { parent: acc }
     }
 }
 
-struct DilateXIter<TIter: Iterator<Item: CreateRange>> {
+impl<'a, TRange> Iterator for DilateIter<'a, TRange>
+where
+    TRange: 'static
+        + CreateRange<
+            Item: Add<Output = TRange::Item>
+                      + SaturatingSub<Output = TRange::Item>
+                      + Copy
+                      + Debug
+                      + Integer
+                      + One,
+        >,
+{
+    type Item = TRange;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let x = self.parent.next()?;
+        let start: TRange::Item = *x.start();
+        let end: TRange::Item = *x.end() + TRange::Item::one();
+
+        Some(TRange::new_debug_checked_zeroable(start, end))
+    }
+}
+
+pub struct DilateXIter<TIter: Iterator<Item: CreateRange>> {
     parent: TIter,
     offset: <TIter::Item as CreateRange>::Item,
 }
@@ -81,7 +166,7 @@ where
 mod tests {
     use std::num::NonZeroU32;
 
-    use crate::{ImaskSet, Rect, SortedRanges};
+    use crate::{ImaskSet, Rect};
 
     use super::*;
     const NONZERO_80: NonZeroU32 = NonZeroU32::new(80).unwrap();
@@ -91,13 +176,8 @@ mod tests {
         let top = 5u32 * 80 + 50..5 * 80 + 52;
         let bottom = 6 * 80 + 50..6 * 80 + 52;
         let data = [top, bottom].with_roi(Rect::new(0, 10, NONZERO_80, NONZERO_80));
-        let data_dilate = DilateIter {
-            parent: SanitizeSortedDisjoint::new(DilateXIter {
-                offset: 2,
-                parent: data.into_iter(),
-            }),
-        }
-        .collect::<Vec<_>>();
+        let data_dilate = DilateIter::new(data.into_iter(), const { NonZeroU32::new(2).unwrap() })
+            .collect::<Vec<_>>();
         let expected = (0..6)
             .map(|offset| (3 + offset) * 80 + 48..(3 + offset) * 80 + 54)
             .collect::<Vec<_>>();

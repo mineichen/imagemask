@@ -84,6 +84,7 @@ pub trait SignedNonZeroable: Sized {
     /// # Safety
     /// Provided value mustn't be 0
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero;
+    fn iter_steps(self, steps: Self::NonZero) -> impl Iterator<Item = Self>;
 }
 
 impl SignedNonZeroable for u8 {
@@ -103,6 +104,10 @@ impl SignedNonZeroable for u8 {
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
+
+    fn iter_steps(self, steps: Self::NonZero) -> impl Iterator<Item = Self> {
+        self..self + steps.get()
+    }
 }
 impl SignedNonZeroable for u16 {
     type NonZero = NonZero<u16>;
@@ -120,6 +125,9 @@ impl SignedNonZeroable for u16 {
     #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
+    }
+    fn iter_steps(self, steps: Self::NonZero) -> impl Iterator<Item = Self> {
+        self..self + steps.get()
     }
 }
 impl SignedNonZeroable for u32 {
@@ -139,6 +147,9 @@ impl SignedNonZeroable for u32 {
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
     }
+    fn iter_steps(self, steps: Self::NonZero) -> impl Iterator<Item = Self> {
+        self..self + steps.get()
+    }
 }
 impl SignedNonZeroable for u64 {
     type NonZero = NonZero<u64>;
@@ -156,6 +167,9 @@ impl SignedNonZeroable for u64 {
     #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
+    }
+    fn iter_steps(self, steps: Self::NonZero) -> impl Iterator<Item = Self> {
+        self..self + steps.get()
     }
 }
 
@@ -175,6 +189,9 @@ impl SignedNonZeroable for usize {
     #[inline]
     unsafe fn create_non_zero_unchecked(self) -> Self::NonZero {
         unsafe { NonZero::new_unchecked(self) }
+    }
+    fn iter_steps(self, steps: Self::NonZero) -> impl Iterator<Item = Self> {
+        self..self + steps.get()
     }
 }
 
