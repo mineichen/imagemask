@@ -16,6 +16,7 @@ use crate::{
 
 mod bounds_inspector;
 mod chunk_by_row;
+mod clip;
 mod clip_2d;
 #[cfg(feature = "async-io")]
 mod future;
@@ -51,14 +52,11 @@ pub trait ImaskSet: IntoIterator + Sized {
         BoundsInspector::new(self.into_iter())
     }
 
-    fn try_clip_2d(
-        self,
-        roi: Rect<u32>,
-    ) -> Result<Clip2dIter<Self::IntoIter, Self::Item>, RoiWidthExceedsOriginal>
+    fn clip(self, roi: Rect<u32>) -> Clip2dIter<Self::IntoIter, Self::Item>
     where
         Self::IntoIter: ImageDimension,
     {
-        Clip2dIter::try_new(self.into_iter(), roi)
+        Clip2dIter::new(self.into_iter(), roi)
     }
 
     fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item>
@@ -617,8 +615,7 @@ mod tests {
 
         let ranges = rect
             .into_rect_iter::<Range<u32>>(GLOBAL_WIDTH)
-            .try_clip_2d(rect)
-            .unwrap()
+            .clip(rect)
             .collect::<Vec<_>>();
         assert_eq!(1, ranges.len());
         let ranges = SortedRanges::<u16, u16>::try_from_ordered_iter_roi(
