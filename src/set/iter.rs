@@ -5,6 +5,7 @@ use std::{
 
 use crate::{CreateRange, ImageDimension, Rect, SignedNonZeroable, UncheckedCast};
 
+#[derive(Clone)]
 pub struct SortedRangesIter<TIncludedIter, TExcludedIter, TOut: CreateRange> {
     include: TIncludedIter,
     excluded: TExcludedIter,

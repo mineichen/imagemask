@@ -27,5 +27,5 @@ futures-util = "0.3"
 testresult = "0.4"
 
 [features]
-default = ["range-set-blaze-0_5", "rkyv", "async-io"]
+#default = ["range-set-blaze-0_5", "rkyv", "async-io"]
 async-io = ["futures-io", "futures-core", "pin-project-lite"]

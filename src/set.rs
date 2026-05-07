@@ -6,17 +6,21 @@ use std::{
     ops::{Add, Div, Mul, Rem, Sub},
 };
 
-fn invalid_data<T: Display>(e: T) -> std::io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-}
 use crate::{
     CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast, WithBounds,
     WithRoi,
 };
+#[cfg(feature = "range-set-blaze-0_5")]
+use num_traits::{CheckedSub, One, SaturatingSub, Zero};
+
+fn invalid_data<T: Display>(e: T) -> std::io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+}
 
 mod bounds_inspector;
 mod chunk_by_row;
 mod clip_2d;
+#[cfg(feature = "range-set-blaze-0_5")]
 mod dilate;
 #[cfg(feature = "async-io")]
 mod future;
@@ -31,6 +35,7 @@ mod split_rows;
 pub use bounds_inspector::*;
 pub use chunk_by_row::*;
 pub use clip_2d::*;
+#[cfg(feature = "range-set-blaze-0_5")]
 pub use dilate::*;
 pub use iter::*;
 pub use iter_global::*;
@@ -82,6 +87,29 @@ pub trait ImaskSet: IntoIterator + Sized {
     }
     fn with_bounds(self, width: NonZeroU32, height: NonZeroU32) -> WithBounds<Self::IntoIter> {
         WithBounds::new(self.into_iter(), width, height)
+    }
+    #[cfg(feature = "range-set-blaze-0_5")]
+    fn dilate<'a>(
+        self,
+        offset: <<Self::Item as CreateRange>::Item as SignedNonZeroable>::NonZero,
+    ) -> DilateIter<'a, Self::Item>
+    where
+        Self::Item: 'static
+            + CreateRange<
+                Item: Debug
+                          + Add<Output = <Self::Item as CreateRange>::Item>
+                          + SaturatingSub<Output = <Self::Item as CreateRange>::Item>
+                          + CheckedSub<Output = <Self::Item as CreateRange>::Item>
+                          + Copy
+                          + range_set_blaze_0_5::Integer
+                          + Zero
+                          + One,
+            >,
+        Self::IntoIter: 'a + std::iter::FusedIterator<Item = Self::Item> + Clone + ImageDimension,
+        SanitizeSortedDisjoint<DilateXIter<Self::IntoIter>>: Iterator<Item = Self::Item>,
+        u32: UncheckedCast<<Self::Item as CreateRange>::Item>,
+    {
+        DilateIter::new(self.into_iter(), offset)
     }
 }
 
@@ -401,6 +429,8 @@ impl<TIncluded, TExcluded> ImageDimension for SortedRanges<TIncluded, TExcluded>
 #[cfg(test)]
 mod tests {
     use std::ops::{Range, RangeInclusive};
+
+    use crate::{NonZeroRange, Rect};
 
     use super::*;
 

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, iter::FusedIterator, num::NonZero, ops::RangeInclusive};
+use std::{fmt::Debug, iter::FusedIterator, num::NonZero};
 
 use crate::{CreateRange, ImageDimension};
 
@@ -209,13 +209,13 @@ mod range_set_blaze_0_5_interop {
 
     impl<I, T: Integer + num_traits::Unsigned + Debug> SortedStarts<T> for SanitizeSortedDisjoint<I>
     where
-        I: FusedIterator<Item = RangeInclusive<T>>,
+        I: FusedIterator<Item = std::ops::RangeInclusive<T>>,
         I::Item: CreateRange<Item = T>,
     {
     }
     impl<I, T: Integer + num_traits::Unsigned + Debug> SortedDisjoint<T> for SanitizeSortedDisjoint<I>
     where
-        I: FusedIterator<Item = RangeInclusive<T>>,
+        I: FusedIterator<Item = std::ops::RangeInclusive<T>>,
         I::Item: CreateRange<Item = T>,
     {
     }
@@ -223,6 +223,8 @@ mod range_set_blaze_0_5_interop {
 
 #[cfg(test)]
 mod tests {
+
+    use core::ops::RangeInclusive;
 
     use super::*;
 

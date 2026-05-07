@@ -1,12 +1,13 @@
 use std::fmt::Debug;
 use std::iter::FusedIterator;
+use std::num::NonZeroU32;
 use std::ops::Add;
 
 use num_traits::{CheckedSub, One, SaturatingSub, Zero};
 use range_set_blaze_0_5::{CheckSortedDisjoint, DynSortedDisjoint, Integer, SortedDisjoint};
 
 use crate::{
-    CreateRange, ImageDimension, SanitizeSortedDisjoint, SignedNonZeroable, UncheckedCast,
+    CreateRange, ImageDimension, Rect, SanitizeSortedDisjoint, SignedNonZeroable, UncheckedCast,
 };
 
 // pub struct DilateIter<TIter>
@@ -24,6 +25,7 @@ use crate::{
 // }
 pub struct DilateIter<'a, T: CreateRange<Item: Integer>> {
     parent: DynSortedDisjoint<'a, T::Item>,
+    bounds: Rect<u32>,
 }
 impl<'a, TItem> DilateIter<'a, TItem>
 where
@@ -99,7 +101,10 @@ where
         let acc: DynSortedDisjoint<'a, <<TIter as Iterator>::Item as CreateRange>::Item> =
             DynSortedDisjoint::new(acc.union(original));
 
-        Self { parent: acc }
+        Self {
+            parent: acc,
+            bounds: iter.bounds(),
+        }
     }
 }
 
@@ -123,6 +128,16 @@ where
         let end: TRange::Item = *x.end() + TRange::Item::one();
 
         Some(TRange::new_debug_checked_zeroable(start, end))
+    }
+}
+
+impl<'a, T: CreateRange<Item: range_set_blaze_0_5::Integer>> ImageDimension for DilateIter<'a, T> {
+    fn bounds(&self) -> Rect<u32> {
+        self.bounds
+    }
+
+    fn width(&self) -> NonZeroU32 {
+        self.bounds.width
     }
 }
 
@@ -168,7 +183,6 @@ mod tests {
 
     use crate::{ImaskSet, Rect};
 
-    use super::*;
     const NONZERO_80: NonZeroU32 = NonZeroU32::new(80).unwrap();
 
     #[test]
@@ -176,7 +190,8 @@ mod tests {
         let top = 5u32 * 80 + 50..5 * 80 + 52;
         let bottom = 6 * 80 + 50..6 * 80 + 52;
         let data = [top, bottom].with_roi(Rect::new(0, 10, NONZERO_80, NONZERO_80));
-        let data_dilate = DilateIter::new(data.into_iter(), const { NonZeroU32::new(2).unwrap() })
+        let data_dilate = data
+            .dilate(const { NonZeroU32::new(2).unwrap() })
             .collect::<Vec<_>>();
         let expected = (0..6)
             .map(|offset| (3 + offset) * 80 + 48..(3 + offset) * 80 + 54)
