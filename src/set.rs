@@ -31,10 +31,12 @@ mod offsets_iter;
 mod rect;
 mod sanitize_sorted_disjoint;
 mod split_rows;
+mod affine_transform;
 
 pub use bounds_inspector::*;
 pub use chunk_by_row::*;
 pub use clip_2d::*;
+pub use affine_transform::*;
 #[cfg(feature = "range-set-blaze-0_5")]
 pub use dilate::*;
 pub use iter::*;
