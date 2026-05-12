@@ -31,7 +31,8 @@ impl<'a, TItem> DilateIter<'a, TItem>
 where
     TItem: 'static
         + CreateRange<
-            Item: Debug
+            Item: SignedNonZeroable
+                      + Debug
                       + Add<Output = TItem::Item>
                       + SaturatingSub<Output = TItem::Item>
                       + CheckedSub<Output = TItem::Item>

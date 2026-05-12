@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Sub},
 };
 
-use crate::{CreateRange, NonZeroRange, RectIterator, SignedNonZeroable};
+use crate::{CreateRange, NonZeroRange, RectIterator, SignedNonZeroable, UncheckedCast};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "rkyv", derive(rkyv::Archive))]
@@ -73,6 +73,18 @@ impl<T: SignedNonZeroable> Rect<T> {
         T: Copy,
     {
         NonZeroRange::new_debug_checked(self.x, self.width)
+    }
+
+    pub fn try_cast<TNew: SignedNonZeroable + TryFrom<T>>(self) -> Result<Rect<TNew>, TNew::Error>
+where {
+        Ok(Rect {
+            x: self.x.try_into()?,
+            y: self.y.try_into()?,
+            width: TNew::create_non_zero(self.width.into().try_into()?)
+                .expect("Width doesn't overflow"),
+            height: TNew::create_non_zero(self.height.into().try_into()?)
+                .expect("Height doesn't overflow"),
+        })
     }
 
     pub fn into_rect_iter<R: CreateRange<Item = T>>(

@@ -339,8 +339,7 @@ mod tests {
 
             let a_iter = a.iter_owned::<RangeInclusive<usize>>();
             let b_iter = b.iter_owned::<RangeInclusive<usize>>();
-            let result = b_iter
-                .union(a_iter)
+            let result = range_set_blaze_0_5::SortedDisjointMap::union(b_iter, a_iter)
                 .map(|(r, m)| (*r.start()..(*r.end() + 1), m))
                 .collect::<Vec<_>>();
 
@@ -371,8 +370,7 @@ mod tests {
             let b_iter = b.iter_owned::<RangeInclusive<u64>>();
             let a = a
                 .map_inplace(|a_iter| {
-                    b_iter
-                        .union(a_iter)
+                    range_set_blaze_0_5::SortedDisjointMap::union(b_iter, a_iter)
                         .map(|(r, m)| (*r.start()..=(*r.end()), m))
                 })
                 .unwrap();

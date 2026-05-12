@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, Span, UncheckedCast,
-    WithBounds, WithRoi,
+    CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, Span, SpanIntoRangesIter,
+    UncheckedCast, WithBounds, WithRoi, span,
 };
 #[cfg(feature = "range-set-blaze-0_5")]
 use num_traits::{CheckedSub, One, SaturatingSub, Zero};
@@ -83,6 +83,16 @@ pub trait ImaskSet: IntoIterator + Sized {
     //     SplitRowsIter::new(self.into_iter())
     // }
 
+    fn into_ranges<TOut: CreateRange<Item: SignedNonZeroable>>(
+        self,
+    ) -> crate::span::SpanIntoRangesIter<Self::IntoIter, TOut>
+    where
+        Self::IntoIter: ImageDimension,
+        TOut::Item: TryFrom<u32, Error: Debug>,
+    {
+        crate::span::SpanIntoRangesIter::new(self.into_iter())
+    }
+
     fn sanitize_sorted_disjoint(self) -> SanitizeSortedDisjoint<Self::IntoIter>
     where
         Self::Item: CreateRange<Item: Debug>,
@@ -104,7 +114,8 @@ pub trait ImaskSet: IntoIterator + Sized {
     where
         Self::Item: 'static
             + CreateRange<
-                Item: Debug
+                Item: SignedNonZeroable
+                          + Debug
                           + Add<Output = <Self::Item as CreateRange>::Item>
                           + SaturatingSub<Output = <Self::Item as CreateRange>::Item>
                           + CheckedSub<Output = <Self::Item as CreateRange>::Item>
@@ -452,15 +463,15 @@ mod tests {
     #[cfg(feature = "range-set-blaze-0_5")]
     #[test]
     fn combine_inline() {
-        use range_set_blaze_0_5::SortedDisjoint;
-
         let a = SortedRanges::<u8, u8>::try_from_ordered_iter_roi([10u32..20, 30..40], TEST_BOUNDS)
             .unwrap();
         let b = SortedRanges::<u8, u8>::try_from_ordered_iter_roi([20u32..30, 41..45], TEST_BOUNDS)
             .unwrap();
 
         let b_iter = b.iter_roi::<RangeInclusive<u64>>();
-        let a = a.map_inplace(|a_iter| b_iter.union(a_iter)).unwrap();
+        let a = a
+            .map_inplace(|a_iter| range_set_blaze_0_5::SortedDisjoint::union(b_iter, a_iter))
+            .unwrap();
 
         assert_eq!(
             vec![10u64..40, 41..45],

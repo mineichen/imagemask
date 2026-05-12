@@ -6,10 +6,12 @@ use std::{
 use crate::{CreateRange, ImageDimension, NonZeroRange, UncheckedCast};
 
 mod clip;
+mod into_ranges;
 mod rect;
 mod union;
 
 pub use clip::*;
+pub use into_ranges::*;
 pub use rect::*;
 pub use union::*;
 
