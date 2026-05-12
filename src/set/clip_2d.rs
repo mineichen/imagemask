@@ -19,7 +19,8 @@ pub struct Clip2dIter<T, R> {
     pending: Option<R>,
 }
 
-impl<T: Iterator + ImageDimension, R: CreateRange<Item: Debug>> Debug for Clip2dIter<T, R>
+impl<T: Iterator + ImageDimension, R: CreateRange<Item: Debug + SignedNonZeroable>> Debug
+    for Clip2dIter<T, R>
 where
     <R::Item as SignedNonZeroable>::NonZero: Debug,
 {
@@ -67,7 +68,8 @@ where
                   + std::ops::Add<Output = R::Item>
                   + std::ops::Mul<Output = R::Item>
                   + std::ops::Div<Output = R::Item>
-                  + std::ops::Rem<Output = R::Item>,
+                  + std::ops::Rem<Output = R::Item>
+                  + SignedNonZeroable,
     >,
     u32: UncheckedCast<R::Item>,
 {

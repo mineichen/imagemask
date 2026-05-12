@@ -57,13 +57,10 @@ where
         if end <= next_row_start {
             Some(range)
         } else {
-            let clip_len = SignedNonZeroable::create_non_zero(next_row_start - start)
-                .expect("Mustn't be zero");
-            let remaining_len =
-                unsafe { SignedNonZeroable::create_non_zero_unchecked(end - next_row_start) };
+            let remaining_len = end - next_row_start;
 
-            self.pending = Some(R::new_debug_checked(next_row_start, remaining_len));
-            Some(R::new_debug_checked(start, clip_len))
+            self.pending = Some(R::new_debug_checked_zeroable(next_row_start, remaining_len));
+            Some(R::new_debug_checked_zeroable(start, next_row_start - start))
         }
     }
 }

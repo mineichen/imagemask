@@ -1,16 +1,17 @@
 use std::{fmt::Debug, ops::Add};
 
-use num_traits::Bounded;
-
 use crate::{MetaRange, NonZeroRange, SignedNonZeroable};
 
 pub trait CreateRange: Sized {
-    type Item: SignedNonZeroable;
+    type Item;
     type ListItem<TMeta>: From<(Self, TMeta)>;
+
     fn new_debug_checked(
         start: Self::Item,
         len: <Self::Item as SignedNonZeroable>::NonZero,
-    ) -> Self;
+    ) -> Self
+    where
+        Self::Item: SignedNonZeroable;
     fn new_debug_checked_zeroable(start: Self::Item, end: Self::Item) -> Self;
 
     fn start(&self) -> Self::Item;
@@ -80,9 +81,7 @@ impl<T: SignedNonZeroable + PartialOrd + Copy + Add<Output = T>> CreateRange
     }
 }
 
-impl<T: SignedNonZeroable + Copy + PartialEq + Debug + Bounded + Ord> CreateRange
-    for NonZeroRange<T>
-{
+impl<T: Copy + Debug + Ord> CreateRange for NonZeroRange<T> {
     type Item = T;
     type ListItem<TMeta> = MetaRange<Self, TMeta>;
 
@@ -92,10 +91,10 @@ impl<T: SignedNonZeroable + Copy + PartialEq + Debug + Bounded + Ord> CreateRang
     }
 
     #[inline]
-    fn new_debug_checked(
-        start: Self::Item,
-        len: <Self::Item as SignedNonZeroable>::NonZero,
-    ) -> Self {
+    fn new_debug_checked(start: Self::Item, len: <Self::Item as SignedNonZeroable>::NonZero) -> Self
+    where
+        Self::Item: SignedNonZeroable,
+    {
         NonZeroRange::from_span(start, len)
     }
     fn start(&self) -> Self::Item {

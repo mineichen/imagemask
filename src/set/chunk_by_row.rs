@@ -96,11 +96,11 @@ where
                     shared.pending_nextline = Some(r);
                     break;
                 } else if r.end() > self.next_line_start {
-                    let remaining_len = unsafe {
-                        SignedNonZeroable::create_non_zero_unchecked(r.end() - self.next_line_start)
-                    };
-                    shared.pending_nextline =
-                        Some(R::new_debug_checked(self.next_line_start, remaining_len));
+                    let remaining_len = r.end() - self.next_line_start;
+                    shared.pending_nextline = Some(R::new_debug_checked_zeroable(
+                        self.next_line_start,
+                        remaining_len,
+                    ));
                     break;
                 }
             }

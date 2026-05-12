@@ -1,6 +1,6 @@
 use std::{fmt::Debug, iter::FusedIterator, marker::PhantomData, num::NonZero};
 
-use num_traits::{Bounded, One, Zero};
+use num_traits::{One, Zero};
 
 use crate::{CreateRange, ImageDimension, Rect, UncheckedCast};
 
@@ -64,8 +64,7 @@ impl<T, R> Iterator for BoundsInspector<T, R>
 where
     T: Iterator<Item = R> + ImageDimension,
     R: CreateRange,
-    R::Item: Bounded
-        + Copy
+    R::Item: Copy
         + Ord
         + std::ops::Rem<Output = R::Item>
         + std::ops::Div<Output = R::Item>

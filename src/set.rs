@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, UncheckedCast, WithBounds,
-    WithRoi,
+    CreateRange, ImageDimension, NonZeroRange, Rect, SignedNonZeroable, Span, UncheckedCast,
+    WithBounds, WithRoi,
 };
 #[cfg(feature = "range-set-blaze-0_5")]
 use num_traits::{CheckedSub, One, SaturatingSub, Zero};
@@ -18,7 +18,8 @@ fn invalid_data<T: Display>(e: T) -> std::io::Error {
 }
 
 mod bounds_inspector;
-mod chunk_by_row;
+// mod chunk_by_row;
+mod affine_transform;
 mod clip_2d;
 #[cfg(feature = "range-set-blaze-0_5")]
 mod dilate;
@@ -30,13 +31,12 @@ mod map_inplace;
 mod offsets_iter;
 mod rect;
 mod sanitize_sorted_disjoint;
-mod split_rows;
-mod affine_transform;
+// mod split_rows;
 
-pub use bounds_inspector::*;
-pub use chunk_by_row::*;
-pub use clip_2d::*;
 pub use affine_transform::*;
+pub use bounds_inspector::*;
+// pub use chunk_by_row::*;
+pub use clip_2d::*;
 #[cfg(feature = "range-set-blaze-0_5")]
 pub use dilate::*;
 pub use iter::*;
@@ -45,19 +45,25 @@ pub use map_inplace::*;
 pub use offsets_iter::*;
 pub use rect::*;
 pub use sanitize_sorted_disjoint::*;
-pub use split_rows::*;
+// pub use split_rows::*;
 
 pub trait ImaskSet: IntoIterator + Sized {
-    /// # Panics
-    /// If the previous RowIterator is kept when getting the next RowIterator
-    fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
-        self,
-    ) -> ChunkByRowRanges<Self::IntoIter, R> {
-        ChunkByRowRanges::new(self.into_iter())
-    }
+    // /// # Panics
+    // /// If the previous RowIterator is kept when getting the next RowIterator
+    // fn chunk_by_row_lending<R: CreateRange<Item: SignedNonZeroable>>(
+    //     self,
+    // ) -> ChunkByRowRanges<Self::IntoIter, R> {
+    //     ChunkByRowRanges::new(self.into_iter())
+    // }
 
     fn inspect_bounds<R: CreateRange>(self) -> BoundsInspector<Self::IntoIter, R> {
         BoundsInspector::new(self.into_iter())
+    }
+    fn union<TOther: IntoIterator<Item = Span<T>>, T>(
+        self,
+        other: TOther,
+    ) -> crate::span::Union<Self::IntoIter, TOther::IntoIter> {
+        crate::span::Union::new(self.into_iter(), other.into_iter())
     }
 
     fn try_clip_2d(
@@ -70,12 +76,12 @@ pub trait ImaskSet: IntoIterator + Sized {
         Clip2dIter::try_new(self.into_iter(), roi)
     }
 
-    fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item>
-    where
-        Self::IntoIter: ImageDimension,
-    {
-        SplitRowsIter::new(self.into_iter())
-    }
+    // fn split_rows(self) -> SplitRowsIter<Self::IntoIter, Self::Item>
+    // where
+    //     Self::IntoIter: ImageDimension,
+    // {
+    //     SplitRowsIter::new(self.into_iter())
+    // }
 
     fn sanitize_sorted_disjoint(self) -> SanitizeSortedDisjoint<Self::IntoIter>
     where

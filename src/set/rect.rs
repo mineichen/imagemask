@@ -22,7 +22,9 @@ pub enum RectIteratorKind<R: CreateRange<Item: SignedNonZeroable>> {
     PartialWidth(PartialWidthRectIterator<R>),
 }
 
-impl<R: CreateRange<Item: TryInto<u32, Error: Debug>>> ImageDimension for RectIterator<R> {
+impl<R: CreateRange<Item: SignedNonZeroable + TryInto<u32, Error: Debug>>> ImageDimension
+    for RectIterator<R>
+{
     fn width(&self) -> std::num::NonZero<u32> {
         NonZero::new(self.width.into().try_into().expect("width < u32::MAX"))
             .expect("self.width is NonZero")

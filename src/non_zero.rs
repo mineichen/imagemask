@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::num::NonZero;
 use std::ops::{Add, Deref, Range, RangeInclusive, Sub};
 
-use num_traits::{Bounded, One};
+use num_traits::One;
 
 /// NonZero is only checked during Debug and should not be relied upon for safety
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -225,7 +225,7 @@ impl<T> NonZeroRange<T> {
     }
 }
 
-impl<T: PartialOrd + Ord + Copy + Debug + Bounded> NonZeroRange<T> {
+impl<T: Ord + Debug> NonZeroRange<T> {
     pub fn new(into_range: impl Into<RangeUnchecked<T>>) -> Self {
         let r = Self(into_range.into());
         assert!(
@@ -250,7 +250,10 @@ impl<T: PartialOrd + Ord + Copy + Debug + Bounded> NonZeroRange<T> {
     pub fn overlaps(&self, other: &Self) -> bool {
         self.start < other.end && other.start < self.end
     }
-    pub fn intersection(&self, other: &Self) -> Option<Self> {
+    pub fn intersection(&self, other: &Self) -> Option<Self>
+    where
+        T: Copy,
+    {
         let start = max(self.start, other.start);
         let end = min(self.end, other.end);
         if end > start {
